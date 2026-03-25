@@ -3,49 +3,43 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main() {
-  const totalSIPs = await prisma.sIP.count();
+  const totalLibraries = await prisma.library.count();
   const totalCategories = await prisma.category.count();
-  const totalOS = await prisma.operatingSystem.count();
+  const totalPlatforms = await prisma.platform.count();
+  const totalLanguages = await prisma.language.count();
   const totalVersions = await prisma.version.count();
-  const totalComponents = await prisma.component.count();
+  const totalFeatures = await prisma.feature.count();
 
   console.log('\n📊 Database Statistics:');
   console.log('─────────────────────────');
-  console.log(`SIPs:          ${totalSIPs}`);
+  console.log(`Libraries:     ${totalLibraries}`);
   console.log(`Categories:    ${totalCategories}`);
-  console.log(`OS:            ${totalOS}`);
+  console.log(`Platforms:     ${totalPlatforms}`);
+  console.log(`Languages:     ${totalLanguages}`);
   console.log(`Versions:      ${totalVersions}`);
-  console.log(`Components:    ${totalComponents}`);
+  console.log(`Features:      ${totalFeatures}`);
   console.log('─────────────────────────\n');
 
-  // Show breakdown by category
-  const sipsByCategory = await prisma.category.findMany({
-    include: {
-      _count: {
-        select: { sips: true },
-      },
-    },
+  const byCategory = await prisma.category.findMany({
+    include: { _count: { select: { libraries: true } } },
+    orderBy: { name: 'asc' },
   });
 
-  console.log('📁 SIPs by Category:');
-  sipsByCategory.forEach((cat) => {
-    console.log(`  ${cat.name}: ${cat._count.sips}`);
+  console.log('📁 Libraries by Category:');
+  byCategory.forEach((cat) => {
+    console.log(`  ${cat.name}: ${cat._count.libraries}`);
   });
 
   console.log('\n');
 
-  // Show breakdown by OS
-  const sipsByOS = await prisma.operatingSystem.findMany({
-    include: {
-      _count: {
-        select: { sips: true },
-      },
-    },
+  const byLanguage = await prisma.language.findMany({
+    include: { _count: { select: { libraries: true } } },
+    orderBy: { name: 'asc' },
   });
 
-  console.log('💻 SIPs by Operating System:');
-  sipsByOS.forEach((os) => {
-    console.log(`  ${os.name}: ${os._count.sips}`);
+  console.log('💻 Libraries by Language:');
+  byLanguage.forEach((lang) => {
+    console.log(`  ${lang.name}: ${lang._count.libraries}`);
   });
 
   console.log('\n');

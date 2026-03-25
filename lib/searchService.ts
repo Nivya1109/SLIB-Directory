@@ -1,134 +1,347 @@
-import { searchClient, SIP_COLLECTION } from './search';
-import { prisma } from './prisma';
+/**
+ * searchService.ts — Advanced search engine for LibFinder
+ *
+ * Architecture:
+ *   1. Query pre-processing  — normalize, tokenize, expand synonyms
+ *   2. Typesense (primary)   — fuzzy, typo-tolerant, weighted, prefix search
+ *   3. Postgres (fallback)   — multi-term expanded LIKE + pg_trgm similarity
+ *
+ * Key capabilities added over the original:
+ *   - Typo tolerance (num_typos:2 in Typesense; trigram sim in Postgres)
+ *   - Synonym expansion ("auth" → also searches "authentication", "oauth", "jwt" …)
+ *   - Weighted ranking   (name match >> functionDesc >> summary >> tags >> description)
+ *   - Prefix matching    ("plas" → "Playwright")
+ *   - Multi-term Postgres (each token searched independently, results merged)
+ *   - Intent mapping     ("send emails node" surfaces Nodemailer-class results)
+ */
 
-interface SearchParams {
-  query?: string;
-  category?: string;
-  os?: string;
-  productType?: string[];
-  page?: number;
-  pageSize?: number;
+import { searchClient, SIP_COLLECTION } from './search'
+import { prisma } from './prisma'
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface SearchParams {
+  query?: string
+  category?: string
+  platform?: string
+  language?: string
+  licenseType?: string
+  page?: number
+  pageSize?: number
 }
 
-interface SearchResult {
-  id: string;
-  name: string;
-  slug: string;
-  shortSummary: string | null;
-  description: string | null;
-  costMinUSD: number | null;
-  costMaxUSD: number | null;
-  manufacturer: string | null;
-  supplier: string | null;
-  categories: string[];
-  oses: string[];
+export interface SearchResult {
+  id: string
+  name: string
+  slug: string
+  shortSummary: string | null
+  description: string | null
+  functionDesc: string | null
+  costMinUSD: number | null
+  costMaxUSD: number | null
+  developer: string | null
+  organization: string | null
+  categories: string[]
+  platforms: string[]
+  languages: string[]
 }
 
-interface SearchResponse {
-  results: SearchResult[];
+export interface SearchResponse {
+  results: SearchResult[]
   pagination: {
-    page: number;
-    pageSize: number;
-    total: number;
-    totalPages: number;
-  };
+    page: number
+    pageSize: number
+    total: number
+    totalPages: number
+  }
 }
+
+// ---------------------------------------------------------------------------
+// Synonym dictionary
+// Keeps search intent broad without requiring exact keyword matches.
+// ---------------------------------------------------------------------------
+
+const SYNONYMS: Record<string, string[]> = {
+  // HTTP / Networking
+  http:         ['networking', 'request', 'fetch', 'rest', 'api client'],
+  api:          ['rest', 'http', 'endpoint', 'service', 'client'],
+  rest:         ['http', 'api', 'restful', 'web service'],
+  fetch:        ['http', 'request', 'ajax'],
+  networking:   ['http', 'socket', 'tcp', 'udp'],
+  websocket:    ['real-time', 'socket', 'ws', 'event'],
+  grpc:         ['rpc', 'protobuf', 'streaming'],
+
+  // Authentication & Security
+  auth:           ['authentication', 'authorization', 'login', 'oauth', 'jwt', 'session', 'passport'],
+  authentication: ['auth', 'login', 'oauth', 'jwt', 'session', 'identity'],
+  authorization:  ['auth', 'permissions', 'roles', 'access control', 'rbac'],
+  login:          ['auth', 'authentication', 'session', 'sso'],
+  jwt:            ['authentication', 'token', 'auth', 'jsonwebtoken'],
+  oauth:          ['auth', 'authentication', 'oauth2', 'openid'],
+  session:        ['auth', 'authentication', 'cookie', 'state'],
+  password:       ['hash', 'bcrypt', 'argon2', 'salt', 'security'],
+  hash:           ['cryptography', 'security', 'bcrypt', 'argon2'],
+  encryption:     ['security', 'cryptography', 'crypto', 'tls', 'ssl'],
+  security:       ['auth', 'encryption', 'cryptography', 'tls', 'ssl', 'cors', 'helmet'],
+  crypto:         ['cryptography', 'encryption', 'security', 'hash'],
+
+  // Database
+  db:           ['database', 'orm', 'sql', 'nosql', 'query'],
+  database:     ['db', 'orm', 'sql', 'postgres', 'mysql', 'mongodb', 'storage'],
+  orm:          ['database', 'db', 'query', 'sql', 'mapper'],
+  sql:          ['database', 'query', 'postgres', 'mysql', 'sqlite'],
+  nosql:        ['mongodb', 'database', 'document', 'dynamodb', 'cassandra'],
+  postgres:     ['postgresql', 'database', 'sql', 'pg'],
+  postgresql:   ['postgres', 'database', 'sql'],
+  mysql:        ['database', 'sql', 'mariadb'],
+  mongodb:      ['nosql', 'database', 'document', 'mongoose'],
+  redis:        ['cache', 'caching', 'in-memory', 'key-value'],
+  cache:        ['redis', 'caching', 'in-memory', 'memcached'],
+  migration:    ['database', 'schema', 'alembic', 'flyway'],
+
+  // Testing
+  test:         ['testing', 'unit test', 'jest', 'mocha', 'pytest', 'spec'],
+  testing:      ['test', 'unit test', 'e2e', 'integration', 'assertion'],
+  mock:         ['testing', 'stub', 'fake', 'spy', 'sinon'],
+  e2e:          ['testing', 'end to end', 'playwright', 'cypress', 'browser'],
+  unit:         ['testing', 'unit test', 'assertion', 'expect'],
+  benchmark:    ['performance', 'testing', 'profiling'],
+
+  // Data Science & ML
+  ml:               ['machine learning', 'tensorflow', 'pytorch', 'ai', 'model'],
+  'machine learning': ['ml', 'ai', 'deep learning', 'neural network', 'sklearn'],
+  ai:               ['machine learning', 'ml', 'deep learning', 'llm', 'nlp'],
+  'deep learning':  ['ml', 'ai', 'neural network', 'tensorflow', 'pytorch'],
+  nlp:              ['natural language', 'text', 'transformers', 'bert', 'llm'],
+  data:             ['data science', 'pandas', 'numpy', 'dataframe', 'analysis'],
+  dataframe:        ['pandas', 'data', 'data science', 'csv', 'tabular'],
+  visualization:    ['charts', 'graph', 'plot', 'matplotlib', 'plotly'],
+  charts:           ['visualization', 'recharts', 'chartjs', 'graph', 'plot'],
+  graph:            ['charts', 'visualization', 'plot'],
+  statistics:       ['data science', 'scipy', 'numpy', 'analysis'],
+
+  // Logging & Monitoring
+  log:          ['logging', 'logger', 'monitoring', 'observability'],
+  logging:      ['log', 'logger', 'monitoring', 'structured', 'winston', 'pino'],
+  monitoring:   ['logging', 'metrics', 'observability', 'tracing', 'apm'],
+  metrics:      ['monitoring', 'prometheus', 'observability', 'telemetry'],
+  tracing:      ['monitoring', 'opentelemetry', 'jaeger', 'observability'],
+
+  // Messaging & Events
+  queue:        ['messaging', 'kafka', 'rabbitmq', 'events', 'async'],
+  messaging:    ['queue', 'kafka', 'events', 'pub sub', 'rabbitmq', 'amqp'],
+  kafka:        ['messaging', 'queue', 'events', 'stream', 'kafkajs'],
+  events:       ['messaging', 'queue', 'event driven', 'pubsub', 'emitter'],
+  pubsub:       ['messaging', 'events', 'kafka', 'rabbitmq'],
+  worker:       ['queue', 'background job', 'bull', 'celery', 'task'],
+  'background job': ['queue', 'worker', 'celery', 'bull', 'sidekiq'],
+
+  // DevOps & Infrastructure
+  devops:         ['infrastructure', 'ci/cd', 'docker', 'kubernetes', 'cloud'],
+  infrastructure: ['devops', 'terraform', 'cloud', 'iac'],
+  docker:         ['containers', 'devops', 'image', 'compose'],
+  kubernetes:     ['containers', 'devops', 'orchestration', 'k8s'],
+  cloud:          ['aws', 'gcp', 'azure', 'devops', 'infrastructure'],
+  deploy:         ['devops', 'infrastructure', 'ci/cd', 'docker'],
+  'ci/cd':        ['devops', 'pipeline', 'github actions', 'jenkins'],
+
+  // UI / Frontend
+  ui:         ['frontend', 'components', 'react', 'vue', 'framework', 'widget'],
+  frontend:   ['ui', 'react', 'vue', 'angular', 'web', 'browser'],
+  react:      ['ui', 'frontend', 'javascript', 'component', 'hooks'],
+  vue:        ['ui', 'frontend', 'javascript', 'component', 'composition'],
+  angular:    ['ui', 'frontend', 'typescript', 'component', 'rxjs'],
+  svelte:     ['ui', 'frontend', 'javascript', 'component'],
+  component:  ['ui', 'frontend', 'widget', 'element'],
+  css:        ['styling', 'ui', 'frontend', 'tailwind', 'sass'],
+  animation:  ['ui', 'frontend', 'motion', 'transition'],
+
+  // Platforms & Languages (abbreviation expansion)
+  node:       ['nodejs', 'javascript', 'npm', 'express'],
+  nodejs:     ['node', 'javascript', 'npm'],
+  python:     ['pip', 'pypi', 'py'],
+  js:         ['javascript', 'node'],
+  javascript: ['js', 'node', 'npm', 'typescript'],
+  ts:         ['typescript', 'javascript'],
+  typescript: ['ts', 'javascript', 'typed'],
+  java:       ['jvm', 'spring', 'maven', 'gradle'],
+  go:         ['golang', 'gopher'],
+  golang:     ['go', 'gopher'],
+  rust:       ['cargo', 'systems programming'],
+  ruby:       ['rails', 'gem'],
+
+  // Common intent phrases
+  email:        ['smtp', 'nodemailer', 'mail', 'sendgrid', 'mailgun'],
+  smtp:         ['email', 'mail', 'nodemailer'],
+  pdf:          ['document', 'pdf generation', 'puppeteer'],
+  'file upload': ['multipart', 'storage', 'upload', 'multer', 's3'],
+  upload:       ['file upload', 'multipart', 'storage', 's3'],
+  storage:      ['s3', 'file upload', 'blob', 'cloud storage'],
+  'real-time':  ['websocket', 'socket', 'ws', 'socket.io', 'push'],
+  scraping:     ['web scraping', 'cheerio', 'puppeteer', 'playwright', 'crawl'],
+  crawler:      ['scraping', 'web scraping', 'spider', 'crawl'],
+  validation:   ['schema', 'zod', 'yup', 'joi', 'form validation'],
+  form:         ['validation', 'input', 'schema', 'formik', 'react hook form'],
+  'pdf report': ['document', 'report', 'generation', 'template'],
+  excel:        ['spreadsheet', 'xlsx', 'csv', 'data export'],
+  image:        ['sharp', 'jimp', 'imagemagick', 'resize', 'thumbnail'],
+  date:         ['time', 'datetime', 'moment', 'dayjs', 'date-fns', 'timezone'],
+  time:         ['date', 'datetime', 'moment', 'dayjs', 'duration'],
+  utility:      ['helper', 'lodash', 'underscore', 'ramda', 'tools'],
+  connect:      ['database', 'postgres', 'mysql', 'connection', 'driver'],
+}
+
+// ---------------------------------------------------------------------------
+// Query pre-processor
+// ---------------------------------------------------------------------------
+
+interface ProcessedQuery {
+  original: string       // raw user input
+  normalized: string     // lowercased, cleaned
+  tokens: string[]       // individual words from normalized query
+  expanded: string       // normalized + synonym expansions, space-joined
+  expandedTokens: string[] // individual tokens after expansion
+}
+
+function preprocessQuery(rawQuery: string): ProcessedQuery {
+  const original = rawQuery.trim()
+
+  // Normalize: lowercase, collapse whitespace, strip most punctuation
+  const normalized = original
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (!normalized) {
+    return { original, normalized: '', tokens: [], expanded: '', expandedTokens: [] }
+  }
+
+  const tokens = normalized.split(' ').filter((t) => t.length > 1)
+  const expandedSet = new Set<string>(tokens)
+
+  // Expand single tokens
+  for (const token of tokens) {
+    const syns = SYNONYMS[token]
+    if (syns) syns.forEach((s) => expandedSet.add(s))
+  }
+
+  // Expand bigrams (e.g. "machine learning", "send email")
+  for (let i = 0; i < tokens.length - 1; i++) {
+    const bigram = `${tokens[i]} ${tokens[i + 1]}`
+    const syns = SYNONYMS[bigram]
+    if (syns) syns.forEach((s) => expandedSet.add(s))
+  }
+
+  const expandedTokens = Array.from(expandedSet)
+  const expanded = expandedTokens.join(' ')
+
+  return { original, normalized, tokens, expanded, expandedTokens }
+}
+
+// ---------------------------------------------------------------------------
+// Typesense search
+// ---------------------------------------------------------------------------
 
 interface TypesenseDocument {
-  id: string;
-  name: string;
-  slug: string;
-  shortSummary?: string;
-  costMinUSD?: number;
-  costMaxUSD?: number;
-  manufacturer?: string;
-  supplier?: string;
-  categories: string[];
-  oses: string[];
+  id: string
+  name: string
+  slug: string
+  shortSummary?: string
+  functionDesc?: string
+  description?: string
+  tags?: string[]
+  costMinUSD?: number
+  costMaxUSD?: number
+  developer?: string
+  organization?: string
+  categories: string[]
+  platforms: string[]
+  languages: string[]
 }
 
 interface TypesenseHit {
-  document: TypesenseDocument;
+  document: TypesenseDocument
 }
 
-/**
- * Search SIPs using Typesense with fallback to Postgres
- */
-export async function searchSIPs(params: SearchParams): Promise<SearchResponse> {
-
-  // Try Typesense first
-  try {
-    return await searchWithTypesense(params);
-  } catch (error) {
-    console.warn('Typesense unavailable, falling back to Postgres:', error);
-    // Fall through to Postgres search
-  }
-
-  // Use Postgres as fallback
-  return await searchWithPostgres(params);
-}
-
-/**
- * Search using Typesense for fuzzy/typo-tolerant search with filters
- */
 async function searchWithTypesense(params: SearchParams): Promise<SearchResponse> {
-  const { query = '*', category = '', os = '', productType = [], page = 1, pageSize = 20 } = params;
+  const {
+    query = '',
+    category = '',
+    platform = '',
+    language = '',
+    licenseType = '',
+    page = 1,
+    pageSize = 20,
+  } = params
 
-  // Build filter_by clause
-  const filters: string[] = [];
+  const processed = preprocessQuery(query)
+  // Use the synonym-expanded query for Typesense — its BM25 engine will
+  // match any of the expanded terms across all indexed fields.
+  const tsQuery = processed.expanded || '*'
+  const isWildcard = !processed.expanded
 
-  if (category) {
-    filters.push(`categories:=[${category}]`);
-  }
+  const filters: string[] = []
+  if (category)    filters.push(`categories:=[${category}]`)
+  if (platform)    filters.push(`platforms:=[${platform}]`)
+  if (language)    filters.push(`languages:=[${language}]`)
+  if (licenseType === 'free') filters.push('costMinUSD:=0')
+  if (licenseType === 'paid') filters.push('costMinUSD:>0')
 
-  if (os) {
-    filters.push(`oses:=[${os}]`);
-  }
+  const tsParams = {
+    q: tsQuery,
+    // Field order = relevance weight order.
+    // name gets the most weight (15), tags/functionDesc are secondary (6),
+    // summary is tertiary (4), description/categories last (1).
+    query_by: 'name,tags,functionDesc,shortSummary,description,categories,platforms,languages,developer,organization',
+    query_by_weights: '15,6,6,4,2,1,1,1,3,3',
 
-  // Product type filters
-  if (productType.length > 0) {
-    const productTypeFilters: string[] = [];
+    // Typo tolerance: allow up to 2 edits for words ≥ 7 chars
+    num_typos: 2,
+    typo_tokens_threshold: 1,    // start applying typos even for sparse results
 
-    if (productType.includes('consumer')) {
-      productTypeFilters.push('costMinUSD:>0');
-    }
+    // Prefix matching: "reac" → React, "plas" → Playwright
+    prefix: true,
 
-    if (productType.includes('opensource')) {
-      productTypeFilters.push('costMinUSD:=0');
-    }
+    // Drop tokens that match nothing (avoids 0-result for long queries)
+    drop_tokens_threshold: 1,
 
-    if (productTypeFilters.length > 0) {
-      filters.push(`(${productTypeFilters.join(' || ')})`);
-    }
-  }
+    // Infix matching for substrings in name field (e.g. "mongo" → "Mongoose")
+    infix: 'fallback' as const,
 
-  const searchParams = {
-    q: query || '*',
-    query_by: 'name,shortSummary,description,categories,oses,supplier,manufacturer',
     filter_by: filters.length > 0 ? filters.join(' && ') : undefined,
+
+    sort_by: isWildcard ? 'name:asc' : '_text_match:desc,name:asc',
+
     page,
     per_page: pageSize,
-    sort_by: query === '*' ? 'costMinUSD:asc' : '_text_match:desc,costMinUSD:asc',
-  };
 
-  const searchResults = await searchClient
+    // Return highlighted snippets for UI
+    highlight_full_fields: 'name',
+  }
+
+  const searchResults = await searchClient!
     .collections(SIP_COLLECTION)
     .documents()
-    .search(searchParams);
+    .search(tsParams)
 
-  const results: SearchResult[] = (searchResults.hits as TypesenseHit[] || []).map((hit) => ({
+  const results: SearchResult[] = ((searchResults.hits as TypesenseHit[]) || []).map((hit) => ({
     id: hit.document.id,
     name: hit.document.name,
     slug: hit.document.slug,
     shortSummary: hit.document.shortSummary || null,
-    description: null, // Don't return full description in search results
-    costMinUSD: hit.document.costMinUSD || null,
-    costMaxUSD: hit.document.costMaxUSD || null,
-    manufacturer: hit.document.manufacturer || null,
-    supplier: hit.document.supplier || null,
+    description: hit.document.description || null,
+    functionDesc: hit.document.functionDesc || null,
+    costMinUSD: hit.document.costMinUSD ?? null,
+    costMaxUSD: hit.document.costMaxUSD ?? null,
+    developer: hit.document.developer || null,
+    organization: hit.document.organization || null,
     categories: hit.document.categories || [],
-    oses: hit.document.oses || [],
-  }));
+    platforms: hit.document.platforms || [],
+    languages: hit.document.languages || [],
+  }))
 
   return {
     results,
@@ -138,174 +351,354 @@ async function searchWithTypesense(params: SearchParams): Promise<SearchResponse
       total: searchResults.found || 0,
       totalPages: Math.ceil((searchResults.found || 0) / pageSize),
     },
-  };
+  }
 }
 
-/**
- * Search using Postgres with SQL LIKE for compatibility
- */
-async function searchWithPostgres(params: SearchParams): Promise<SearchResponse> {
-  const { query = '', category = '', os = '', productType = [], page = 1, pageSize = 20 } = params;
+// ---------------------------------------------------------------------------
+// Postgres fallback — 3-pass search with relevance-ranked sorting
+//
+// Pass 1 (precise):   AND all original tokens across all fields
+// Pass 2 (broader):   OR synonym expansions — only when pass 1 returns 0
+// Pass 3 (trigram):   pg_trgm similarity — only when pass 2 returns 0
+//
+// Sorting (client-side after fetch):
+//   1. Exact name match
+//   2. Name starts with query
+//   3. Name contains query
+//   4. Summary/functionDesc contains query
+//   5. Everything else (alphabetical)
+// ---------------------------------------------------------------------------
 
-  // Build product type filters
-  const productTypeFilters = [];
+// ---------------------------------------------------------------------------
+// Full-text search via PostgreSQL tsvector / plainto_tsquery
+//
+// Returns matching library IDs ranked by ts_rank (name weighted 5×, summary 2×,
+// functionDesc 2×, description 1×). Handles word boundaries correctly so
+// "orm" does NOT match "information" or "performance".
+// ---------------------------------------------------------------------------
 
-  if (productType.includes('consumer')) {
-    // Consumer products have price > 0
-    productTypeFilters.push({ costMinUSD: { gt: 0 } });
+interface RawIdRow { id: string }
+
+async function ftSearch(
+  tsQuery: string,
+  facetIds: Set<string> | null,
+  page: number,
+  pageSize: number,
+): Promise<{ ids: string[]; total: number }> {
+  // Build tsvector from weighted fields:
+  //   'A' weight = name (highest)  'B' = shortSummary / functionDesc  'C' = description
+  try {
+    const allRows = await prisma.$queryRaw<RawIdRow[]>`
+      SELECT l.id,
+        ts_rank(
+          setweight(to_tsvector('english', COALESCE(l.name, '')), 'A') ||
+          setweight(to_tsvector('english', COALESCE(l."shortSummary", '')), 'B') ||
+          setweight(to_tsvector('english', COALESCE(l."functionDesc", '')), 'B') ||
+          setweight(to_tsvector('english', COALESCE(l.description, '')), 'C'),
+          plainto_tsquery('english', ${tsQuery})
+        ) AS rank
+      FROM "Library" l
+      WHERE (
+        setweight(to_tsvector('english', COALESCE(l.name, '')), 'A') ||
+        setweight(to_tsvector('english', COALESCE(l."shortSummary", '')), 'B') ||
+        setweight(to_tsvector('english', COALESCE(l."functionDesc", '')), 'B') ||
+        setweight(to_tsvector('english', COALESCE(l.description, '')), 'C')
+      ) @@ plainto_tsquery('english', ${tsQuery})
+      ORDER BY rank DESC, l.name ASC
+    `
+
+    // Apply facet filter in-memory (simpler than raw SQL join)
+    const filtered = facetIds
+      ? allRows.filter((r) => facetIds.has(r.id))
+      : allRows
+
+    const total = filtered.length
+    const ids = filtered.slice((page - 1) * pageSize, page * pageSize).map((r) => r.id)
+    return { ids, total }
+  } catch {
+    return { ids: [], total: 0 }
   }
+}
 
-  if (productType.includes('opensource')) {
-    // Open source products have cost = 0 OR contain open source keywords
-    productTypeFilters.push({
-      OR: [
-        { costMinUSD: { equals: 0 } },
-        { description: { contains: 'open source', mode: 'insensitive' as const } },
-        { description: { contains: 'open-source', mode: 'insensitive' as const } },
-        { name: { contains: 'apache', mode: 'insensitive' as const } },
-        {
-          manufacturer: {
-            OR: [
-              { name: { contains: 'apache', mode: 'insensitive' as const } },
-              { name: { contains: 'foundation', mode: 'insensitive' as const } },
-            ],
-          },
-        },
-      ],
-    });
-  }
-
-  if (productType.includes('devboard')) {
-    // Development boards contain keywords
-    productTypeFilters.push({
-      OR: [
-        { name: { contains: 'board', mode: 'insensitive' as const } },
-        { name: { contains: 'kit', mode: 'insensitive' as const } },
-        { name: { contains: 'devkit', mode: 'insensitive' as const } },
-        { name: { contains: 'development', mode: 'insensitive' as const } },
-      ],
-    });
-  }
-
-  // Build where clause
-  const where = {
-    AND: [
-      // Search by name, description, summary, category name, or OS name
-      query
-        ? {
-            OR: [
-              { name: { contains: query, mode: 'insensitive' as const } },
-              { description: { contains: query, mode: 'insensitive' as const } },
-              { shortSummary: { contains: query, mode: 'insensitive' as const } },
-              {
-                categories: {
-                  some: {
-                    category: {
-                      name: { contains: query, mode: 'insensitive' as const },
-                    },
-                  },
-                },
-              },
-              {
-                oses: {
-                  some: {
-                    os: {
-                      name: { contains: query, mode: 'insensitive' as const },
-                    },
-                  },
-                },
-              },
-              {
-                manufacturer: {
-                  name: { contains: query, mode: 'insensitive' as const },
-                },
-              },
-              {
-                supplier: {
-                  name: { contains: query, mode: 'insensitive' as const },
-                },
-              },
-            ],
-          }
-        : {},
-      // Filter by category
-      category
-        ? {
-            categories: {
-              some: {
-                category: {
-                  name: { equals: category, mode: 'insensitive' as const },
-                },
-              },
-            },
-          }
-        : {},
-      // Filter by OS
-      os
-        ? {
-            oses: {
-              some: {
-                os: {
-                  name: { equals: os, mode: 'insensitive' as const },
-                },
-              },
-            },
-          }
-        : {},
-      // Filter by product type
-      ...(productTypeFilters.length > 0 ? [{ OR: productTypeFilters }] : []),
-    ],
-  };
-
-  // Get total count for pagination
-  const total = await prisma.sIP.count({ where });
-
-  // Get paginated results
-  const sips = await prisma.sIP.findMany({
-    where,
-    include: {
-      categories: {
-        include: {
-          category: true,
-        },
-      },
-      oses: {
-        include: {
-          os: true,
-        },
-      },
-      manufacturer: true,
-      supplier: true,
-    },
-    skip: (page - 1) * pageSize,
-    take: pageSize,
-    orderBy: {
-      name: 'asc',
-    },
-  });
-
-  // Transform results
-  const results: SearchResult[] = sips.map((sip) => ({
-    id: sip.id,
-    name: sip.name,
-    slug: sip.slug,
-    shortSummary: sip.shortSummary,
-    description: sip.description,
-    costMinUSD: sip.costMinUSD,
-    costMaxUSD: sip.costMaxUSD,
-    manufacturer: sip.manufacturer?.name || null,
-    supplier: sip.supplier?.name || null,
-    categories: sip.categories.map((c) => c.category.name),
-    oses: sip.oses.map((o) => o.os.name),
-  }));
-
+// Fallback LIKE search for short / non-English tokens that FTS may not handle
+function makeLikeClause(term: string) {
   return {
-    results,
-    pagination: {
-      page,
-      pageSize,
-      total,
-      totalPages: Math.ceil(total / pageSize),
+    OR: [
+      { name:         { contains: term, mode: 'insensitive' as const } },
+      { shortSummary: { contains: term, mode: 'insensitive' as const } },
+      { functionDesc: { contains: term, mode: 'insensitive' as const } },
+      { categories: { some: { category: { name: { contains: term, mode: 'insensitive' as const } } } } },
+      { languages:  { some: { language: { name: { contains: term, mode: 'insensitive' as const } } } } },
+      { developer:    { name: { contains: term, mode: 'insensitive' as const } } },
+      { organization: { name: { contains: term, mode: 'insensitive' as const } } },
+    ],
+  }
+}
+
+function relevanceScore(
+  lib: { name: string; shortSummary: string | null; functionDesc: string | null },
+  query: string,
+  tokens: string[],
+): number {
+  const n       = lib.name.toLowerCase()
+  const summary = (lib.shortSummary || '').toLowerCase()
+  const func    = (lib.functionDesc || '').toLowerCase()
+  const q       = query.toLowerCase()
+
+  let score = 0
+  if (n === q)              score += 200
+  else if (n.startsWith(q)) score += 150
+  else if (n.includes(q))   score += 100
+
+  for (const token of tokens) {
+    if (n.includes(token))            score += 40
+    else if (summary.includes(token)) score += 12
+    else if (func.includes(token))    score += 8
+  }
+  return score
+}
+
+type LibraryWithRelations = Awaited<ReturnType<typeof prisma.library.findMany<{
+  include: {
+    categories: { include: { category: true } }
+    platforms:  { include: { platform: true } }
+    languages:  { include: { language: true } }
+    developer:    true
+    organization: true
+  }
+}>>>[number]
+
+async function fetchLibrariesByIds(ids: string[]): Promise<LibraryWithRelations[]> {
+  if (ids.length === 0) return []
+  const libs = await prisma.library.findMany({
+    where: { id: { in: ids } },
+    include: {
+      categories: { include: { category: true } },
+      platforms:  { include: { platform: true } },
+      languages:  { include: { language: true } },
+      developer: true, organization: true,
     },
-  };
+  })
+  // Restore the order returned by the query (ts_rank order)
+  const idx = new Map(ids.map((id, i) => [id, i]))
+  return libs.sort((a, b) => (idx.get(a.id) ?? 99) - (idx.get(b.id) ?? 99))
+}
+
+async function searchWithPostgres(params: SearchParams): Promise<SearchResponse> {
+  const {
+    query = '',
+    category = '',
+    platform = '',
+    language = '',
+    licenseType = '',
+    page = 1,
+    pageSize = 20,
+  } = params
+
+  const processed = preprocessQuery(query)
+
+  // Build facet filter using Prisma (applied as an in-memory filter on matched IDs)
+  const licenseClause =
+    licenseType === 'free'  ? [{ costMinUSD: { equals: 0 } }] :
+    licenseType === 'paid'  ? [{ costMinUSD: { gt: 0 } }]     : []
+
+  const facetWhere = {
+    AND: [
+      category ? { categories: { some: { category: { name: { equals: category, mode: 'insensitive' as const } } } } } : {},
+      platform ? { platforms:  { some: { platform:  { name: { equals: platform, mode: 'insensitive' as const } } } } } : {},
+      language ? { languages:  { some: { language:  { name: { equals: language, mode: 'insensitive' as const } } } } } : {},
+      ...(licenseClause.length ? [{ OR: licenseClause }] : []),
+    ].filter(f => Object.keys(f).length > 0),
+  }
+
+  // Pre-compute facet-matching IDs (only when filters are active — skip if no filters)
+  const hasFacets = facetWhere.AND.length > 0
+  let facetIds: Set<string> | null = null
+  if (hasFacets) {
+    const rows = await prisma.library.findMany({ where: facetWhere, select: { id: true } })
+    facetIds = new Set(rows.map((r) => r.id))
+    if (facetIds.size === 0) {
+      return { results: [], pagination: { page, pageSize, total: 0, totalPages: 0 } }
+    }
+  }
+
+  // No text query → return all (with facets applied)
+  if (!processed.tokens.length) {
+    const where = hasFacets ? facetWhere : {}
+    const [total, libraries] = await Promise.all([
+      prisma.library.count({ where }),
+      prisma.library.findMany({
+        where,
+        include: { categories: { include: { category: true } }, platforms: { include: { platform: true } }, languages: { include: { language: true } }, developer: true, organization: true },
+        skip: (page - 1) * pageSize, take: pageSize, orderBy: { name: 'asc' },
+      }),
+    ])
+    return {
+      results: libraries.map(toResult),
+      pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
+    }
+  }
+
+  // Pass 1: Full-text search with the original query (proper word boundaries)
+  const { ids: ftIds, total: ftTotal } = await ftSearch(processed.normalized, facetIds, page, pageSize)
+
+  if (ftTotal > 0) {
+    const libraries = await fetchLibrariesByIds(ftIds)
+    // Re-sort for correct relevance (FTS rank already baked into order from ftSearch)
+    const sorted = libraries.sort((a, b) => {
+      const sa = relevanceScore(a, processed.normalized, processed.tokens)
+      const sb = relevanceScore(b, processed.normalized, processed.tokens)
+      if (sa !== sb) return sb - sa
+      return a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+    })
+    return { results: sorted.map(toResult), pagination: { page, pageSize, total: ftTotal, totalPages: Math.ceil(ftTotal / pageSize) } }
+  }
+
+  // Pass 2: FTS on synonym-expanded query (catches "auth" → "authentication oauth jwt …")
+  if (processed.expandedTokens.length > processed.tokens.length) {
+    const expandedQ = processed.expandedTokens.join(' ')
+    const { ids: exIds, total: exTotal } = await ftSearch(expandedQ, facetIds, page, pageSize)
+    if (exTotal > 0) {
+      const libraries = await fetchLibrariesByIds(exIds)
+      return { results: libraries.map(toResult), pagination: { page, pageSize, total: exTotal, totalPages: Math.ceil(exTotal / pageSize) } }
+    }
+  }
+
+  // Pass 3: LIKE fallback for short tokens / package names (e.g. "pg", "zod", "ky")
+  const likeWhere = {
+    AND: [
+      { OR: processed.tokens.map(makeLikeClause) },
+      ...(hasFacets ? [facetWhere] : []),
+    ],
+  }
+  const [likeTotal, likeLibs] = await Promise.all([
+    prisma.library.count({ where: likeWhere }),
+    prisma.library.findMany({
+      where: likeWhere,
+      include: { categories: { include: { category: true } }, platforms: { include: { platform: true } }, languages: { include: { language: true } }, developer: true, organization: true },
+      skip: (page - 1) * pageSize, take: pageSize, orderBy: { name: 'asc' },
+    }),
+  ])
+  const sorted = [...likeLibs].sort((a, b) => {
+    const sa = relevanceScore(a, processed.normalized, processed.tokens)
+    const sb = relevanceScore(b, processed.normalized, processed.tokens)
+    if (sa !== sb) return sb - sa
+    return a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+  })
+  return { results: sorted.map(toResult), pagination: { page, pageSize, total: likeTotal, totalPages: Math.ceil(likeTotal / pageSize) } }
+}
+
+function toResult(lib: LibraryWithRelations): SearchResult {
+  return {
+    id: lib.id,
+    name: lib.name,
+    slug: lib.slug,
+    shortSummary: lib.shortSummary,
+    description: lib.description,
+    functionDesc: lib.functionDesc,
+    costMinUSD: lib.costMinUSD,
+    costMaxUSD: lib.costMaxUSD,
+    developer: lib.developer?.name || null,
+    organization: lib.organization?.name || null,
+    categories: lib.categories.map((c) => c.category.name),
+    platforms:  lib.platforms.map((p) => p.platform.name),
+    languages:  lib.languages.map((l) => l.language.name),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// pg_trgm typo-tolerant search (runs alongside LIKE to catch fuzzy matches)
+// Uses raw SQL so it is completely independent of Prisma filter syntax.
+// ---------------------------------------------------------------------------
+
+interface RawLibraryRow {
+  id: string
+  name: string
+  slug: string
+  shortSummary: string | null
+  functionDesc: string | null
+  description: string | null
+  costMinUSD: number | null
+  costMaxUSD: number | null
+}
+
+async function trigramSearch(normalized: string, limit: number): Promise<Set<string>> {
+  // Returns a set of library IDs that have trigram similarity ≥ 0.2 to the query
+  try {
+    const rows = await prisma.$queryRaw<RawLibraryRow[]>`
+      SELECT id FROM "Library"
+      WHERE
+        similarity(name, ${normalized}) > 0.2
+        OR similarity("shortSummary", ${normalized}) > 0.15
+        OR similarity("functionDesc", ${normalized}) > 0.15
+      ORDER BY
+        GREATEST(
+          similarity(name, ${normalized}) * 5,
+          COALESCE(similarity("shortSummary", ${normalized}), 0) * 2,
+          COALESCE(similarity("functionDesc", ${normalized}), 0)
+        ) DESC
+      LIMIT ${limit}
+    `
+    return new Set(rows.map((r) => r.id))
+  } catch {
+    // pg_trgm not available — degrade gracefully
+    return new Set()
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Public API — try Typesense, fall back to Postgres (with pg_trgm overlay)
+// ---------------------------------------------------------------------------
+
+export async function searchLibraries(params: SearchParams): Promise<SearchResponse> {
+  try {
+    return await searchWithTypesense(params)
+  } catch (error) {
+    console.warn('Typesense unavailable, falling back to Postgres:', (error as Error).message)
+  }
+
+  const postgresResult = await searchWithPostgres(params)
+
+  // If LIKE search returned nothing (likely a typo), try trigram similarity
+  if (postgresResult.results.length === 0 && params.query && params.query.trim().length >= 3) {
+    const processed = preprocessQuery(params.query)
+    const fuzzyIds = await trigramSearch(processed.normalized, params.pageSize || 20)
+    if (fuzzyIds.size > 0) {
+      const libs = await prisma.library.findMany({
+        where: { id: { in: Array.from(fuzzyIds) } },
+        include: {
+          categories: { include: { category: true } },
+          platforms:  { include: { platform: true } },
+          languages:  { include: { language: true } },
+          developer:    true,
+          organization: true,
+        },
+      })
+      return {
+        results: libs.map((lib) => ({
+          id: lib.id,
+          name: lib.name,
+          slug: lib.slug,
+          shortSummary: lib.shortSummary,
+          description: lib.description,
+          functionDesc: lib.functionDesc,
+          costMinUSD: lib.costMinUSD,
+          costMaxUSD: lib.costMaxUSD,
+          developer: lib.developer?.name || null,
+          organization: lib.organization?.name || null,
+          categories: lib.categories.map((c) => c.category.name),
+          platforms:  lib.platforms.map((p) => p.platform.name),
+          languages:  lib.languages.map((l) => l.language.name),
+        })),
+        pagination: {
+          page: params.page || 1,
+          pageSize: params.pageSize || 20,
+          total: libs.length,
+          totalPages: 1,
+        },
+      }
+    }
+  }
+
+  return postgresResult
 }

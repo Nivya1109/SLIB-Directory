@@ -1,5 +1,5 @@
 // Typesense Indexing Script
-// Indexes all SIPs from PostgreSQL to Typesense
+// Indexes all Libraries from PostgreSQL to Typesense
 
 import { prisma } from '../lib/prisma';
 import { searchClient, SIP_COLLECTION, initializeSearchIndex } from '../lib/search';
@@ -9,91 +9,68 @@ interface SearchDocument {
   name: string;
   slug: string;
   categories: string[];
-  oses: string[];
-  supplier: string;
-  manufacturer: string;
+  platforms: string[];
+  languages: string[];
+  developer: string;
+  organization: string;
   shortSummary: string;
   description: string;
+  functionDesc: string;
+  tags: string[];
   costMinUSD: number;
   costMaxUSD: number;
-  versions: Array<{ name: string; releasedAt: string | null }>;
-  components: Array<{ type: string; name: string; spec: string | null }>;
-  dependencies: string[];
 }
 
-async function indexSIPs() {
-  console.log('Starting SIP indexing to Typesense...');
+async function indexLibraries() {
+  console.log('Starting library indexing to Typesense...');
 
   try {
-    // Initialize search collection with schema
     await initializeSearchIndex();
 
-    // Fetch all SIPs with relations
-    const sips = await prisma.sIP.findMany({
+    const libraries = await prisma.library.findMany({
       include: {
-        categories: {
-          include: {
-            category: true,
-          },
-        },
-        oses: {
-          include: {
-            os: true,
-          },
-        },
-        supplier: true,
-        manufacturer: true,
-        versions: true,
-        components: true,
-        dependencies: {
-          include: {
-            dependsOn: true,
-          },
-        },
+        categories: { include: { category: true } },
+        platforms: { include: { platform: true } },
+        languages: { include: { language: true } },
+        developer: true,
+        organization: true,
       },
     });
 
-    // Transform to search documents
-    const documents: SearchDocument[] = sips.map((sip) => ({
-      id: sip.id,
-      name: sip.name,
-      slug: sip.slug,
-      categories: sip.categories.map((c) => c.category.name),
-      oses: sip.oses.map((o) => o.os.name),
-      supplier: sip.supplier?.name || '',
-      manufacturer: sip.manufacturer?.name || '',
-      shortSummary: sip.shortSummary || '',
-      description: sip.description || '',
-      costMinUSD: sip.costMinUSD || 0,
-      costMaxUSD: sip.costMaxUSD || 0,
-      versions: sip.versions.map((v) => ({
-        name: v.name,
-        releasedAt: v.releasedAt?.toISOString() || null,
-      })),
-      components: sip.components.map((c) => ({
-        type: c.type,
-        name: c.name,
-        spec: c.spec,
-      })),
-      dependencies: sip.dependencies.map((d) => d.dependsOn.name),
+    const documents: SearchDocument[] = libraries.map((lib) => ({
+      id: lib.id,
+      name: lib.name,
+      slug: lib.slug,
+      categories: lib.categories.map((c) => c.category.name),
+      platforms: lib.platforms.map((p) => p.platform.name),
+      languages: lib.languages.map((l) => l.language.name),
+      developer: lib.developer?.name || '',
+      organization: lib.organization?.name || '',
+      shortSummary: lib.shortSummary || '',
+      description: lib.description || '',
+      functionDesc: lib.functionDesc || '',
+      tags: lib.tags || [],
+      costMinUSD: lib.costMinUSD || 0,
+      costMaxUSD: lib.costMaxUSD || 0,
     }));
 
-    // Index documents with upsert
-    console.log(`Indexing ${documents.length} SIPs to Typesense...`);
+    console.log(`Indexing ${documents.length} libraries to Typesense...`);
 
-    if (documents.length > 0) {
+    if (documents.length > 0 && searchClient) {
       const result = await searchClient
         .collections(SIP_COLLECTION)
         .documents()
         .import(documents, { action: 'upsert' });
 
-      console.log(`Indexing completed successfully: ${documents.length} documents indexed`);
+      console.log(`Indexing completed: ${documents.length} documents indexed`);
 
-      // Check for any import errors
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const errors = result.filter((r: any) => !r.success);
       if (errors.length > 0) {
         console.warn(`${errors.length} documents had errors:`, errors);
       }
+    } else if (!searchClient) {
+      console.warn('Typesense client not available — skipping index upload.');
     } else {
       console.log('No documents to index');
     }
@@ -106,7 +83,7 @@ async function indexSIPs() {
 }
 
 if (require.main === module) {
-  indexSIPs();
+  indexLibraries();
 }
 
-export { indexSIPs };
+export { indexLibraries };
