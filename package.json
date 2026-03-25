@@ -28,7 +28,11 @@
     "scrape:irobot": "tsx etl/pipeline.ts --source=scrape-irobot",
     "scrape:wearables": "tsx etl/pipeline.ts --source=scrape-apple-watches --source=scrape-samsung-watches --source=scrape-garmin-watches --source=scrape-fitbit --source=scrape-xiaomi",
     "scrape:appliances": "tsx etl/pipeline.ts --source=scrape-lg --source=scrape-lg-thinq --source=scrape-samsung-appliances --source=scrape-samsung-smartthings --source=scrape-irobot",
-    "scrape:all": "pnpm etl:fetch && pnpm scrape:wearables && pnpm scrape:appliances"
+    "scrape:all": "pnpm etl:fetch && pnpm scrape:wearables && pnpm scrape:appliances",
+    "crawl": "tsx etl/crawlers/run.ts",
+    "crawl:npm": "tsx etl/crawlers/npm.ts",
+    "crawl:pypi": "tsx etl/crawlers/pypi.ts",
+    "crawl:apache": "tsx etl/crawlers/apache.ts"
   },
   "dependencies": {
     "@next-auth/prisma-adapter": "^1.0.7",

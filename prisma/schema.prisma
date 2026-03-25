@@ -1,4 +1,4 @@
-// This is your Prisma schema file,
+// Software Library Directory — Prisma Schema
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
@@ -11,127 +11,184 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-model SIP {
-  id              String        @id @default(cuid())
-  name            String        @unique
-  slug            String        @unique
-  shortSummary    String?
-  description     String?
-  costMinUSD      Int?          // store in cents for precision
-  costMaxUSD      Int?
-  supplierId      String?
-  manufacturerId  String?
-  scrapedAt       DateTime?     // when data was last scraped from source
-  dataSource      String?       // 'scraped', 'curated', or 'manual'
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+// ---------------------------------------------------------------------------
+// Core: Library
+// ---------------------------------------------------------------------------
 
-  supplier        Supplier?     @relation(fields: [supplierId], references: [id])
-  manufacturer    Manufacturer? @relation(fields: [manufacturerId], references: [id])
-  versions        Version[]
-  components      Component[]
-  categories      SIP_Category[]
-  oses            SIP_OS[]
-  dependencies    Dependency[]  @relation("SIPDependencies")
-  dependents      Dependency[]  @relation("SIPDependents")
+model Library {
+  id             String   @id @default(cuid())
+  name           String   @unique
+  slug           String   @unique
+  shortSummary   String?  // one-liner shown on search cards
+  description    String?  // full description
+  functionDesc   String?  // what problem it solves / use-case summary
+  socialImpact   String?  // community impact, adoption notes
+  exampleCode    String?  @db.Text // code snippet showing usage
+  officialUrl    String?  // docs / homepage URL
+  repositoryUrl  String?  // GitHub / GitLab URL
+  costMinUSD     Int?     // 0 = free; stored in cents for precision
+  costMaxUSD     Int?
+  developerId    String?
+  organizationId String?
+  scrapedAt      DateTime? // when data was last fetched from an external source
+  dataSource     String?   // 'manual', 'curated', 'scraped'
+  tags           String[]  @default([]) // searchable keywords: npm keywords, pypi classifiers, extracted terms
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  developer    Developer?    @relation(fields: [developerId], references: [id])
+  organization Organization? @relation(fields: [organizationId], references: [id])
+
+  versions     Version[]
+  features     Feature[]        // notable capabilities / integrations
+
+  // Self-referential dependencies (libraries this one depends on)
+  dependsOn    LibraryDep[]  @relation("LibraryDependencies")
+  dependents   LibraryDep[]  @relation("LibraryDependents")
+
+  categories Library_Category[]
+  platforms  Library_Platform[]  // OS / runtime compatibility
+  languages  Library_Language[]  // programming language(s)
 
   @@index([slug])
-  @@index([supplierId])
-  @@index([manufacturerId])
+  @@index([developerId])
+  @@index([organizationId])
 }
 
-model Supplier {
-  id    String  @id @default(cuid())
-  name  String  @unique
-  url   String?
-  sips  SIP[]
+// ---------------------------------------------------------------------------
+// Developer & Organization
+// ---------------------------------------------------------------------------
+
+model Developer {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  url       String?
+  libraries Library[]
 }
 
-model Manufacturer {
-  id    String  @id @default(cuid())
-  name  String  @unique
-  url   String?
-  sips  SIP[]
+model Organization {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  url       String?
+  libraries Library[]
 }
+
+// ---------------------------------------------------------------------------
+// Category  (Web, Data Science, Security, DevOps, etc.)
+// ---------------------------------------------------------------------------
 
 model Category {
-  id    String         @id @default(cuid())
-  name  String         @unique  // Appliances, Wearables, Cars, etc.
-  sips  SIP_Category[]
+  id        String             @id @default(cuid())
+  name      String             @unique
+  libraries Library_Category[]
 }
 
-model SIP_Category {
-  sipId      String
+model Library_Category {
+  libraryId  String
   categoryId String
   assignedAt DateTime @default(now())
 
-  sip      SIP      @relation(fields: [sipId], references: [id], onDelete: Cascade)
+  library  Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
   category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
-  @@id([sipId, categoryId])
+  @@id([libraryId, categoryId])
   @@index([categoryId])
 }
 
-model OperatingSystem {
-  id    String    @id @default(cuid())
-  name  String    @unique  // FreeRTOS, NuttX, Linux, Zephyr, etc.
-  sips  SIP_OS[]
+// ---------------------------------------------------------------------------
+// Platform  (macOS, Windows, Linux, Web, Android, iOS, Cross-platform)
+// ---------------------------------------------------------------------------
+
+model Platform {
+  id        String             @id @default(cuid())
+  name      String             @unique
+  libraries Library_Platform[]
 }
 
-model SIP_OS {
-  sipId String
-  osId  String
+model Library_Platform {
+  libraryId  String
+  platformId String
 
-  sip SIP             @relation(fields: [sipId], references: [id], onDelete: Cascade)
-  os  OperatingSystem @relation(fields: [osId], references: [id], onDelete: Cascade)
+  library  Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  platform Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
 
-  @@id([sipId, osId])
-  @@index([osId])
+  @@id([libraryId, platformId])
+  @@index([platformId])
 }
+
+// ---------------------------------------------------------------------------
+// Language  (Python, JavaScript, TypeScript, Java, Rust, Go, etc.)
+// ---------------------------------------------------------------------------
+
+model Language {
+  id        String             @id @default(cuid())
+  name      String             @unique
+  libraries Library_Language[]
+}
+
+model Library_Language {
+  libraryId  String
+  languageId String
+
+  library  Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  language Language @relation(fields: [languageId], references: [id], onDelete: Cascade)
+
+  @@id([libraryId, languageId])
+  @@index([languageId])
+}
+
+// ---------------------------------------------------------------------------
+// Version history
+// ---------------------------------------------------------------------------
 
 model Version {
   id         String    @id @default(cuid())
-  sipId      String
-  name       String    // e.g., "1.3.2"
+  libraryId  String
+  name       String    // e.g. "4.2.1"
   releasedAt DateTime?
   notes      String?
 
-  sip SIP @relation(fields: [sipId], references: [id], onDelete: Cascade)
+  library Library @relation(fields: [libraryId], references: [id], onDelete: Cascade)
 
-  @@index([sipId])
+  @@index([libraryId])
 }
 
-model Component {
-  id       String        @id @default(cuid())
-  sipId    String
-  type     ComponentType // HARDWARE or SOFTWARE
-  name     String
-  spec     String?
-  required Boolean       @default(true)
+// ---------------------------------------------------------------------------
+// Feature  (notable capabilities / integrations of a library)
+// ---------------------------------------------------------------------------
 
-  sip SIP @relation(fields: [sipId], references: [id], onDelete: Cascade)
+model Feature {
+  id        String  @id @default(cuid())
+  libraryId String
+  name      String  // e.g. "Async support", "OAuth2 integration"
+  spec      String? // additional detail
+  required  Boolean @default(true)
 
-  @@index([sipId, type])
+  library Library @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+
+  @@index([libraryId])
 }
 
-enum ComponentType {
-  HARDWARE
-  SOFTWARE
-}
+// ---------------------------------------------------------------------------
+// Library → Library dependency (self-referential)
+// ---------------------------------------------------------------------------
 
-model Dependency {
+model LibraryDep {
   id          String @id @default(cuid())
-  sipId       String
+  libraryId   String
   dependsOnId String
 
-  sip       SIP @relation("SIPDependencies", fields: [sipId], references: [id], onDelete: Cascade)
-  dependsOn SIP @relation("SIPDependents", fields: [dependsOnId], references: [id], onDelete: Cascade)
+  library   Library @relation("LibraryDependencies", fields: [libraryId], references: [id], onDelete: Cascade)
+  dependsOn Library @relation("LibraryDependents", fields: [dependsOnId], references: [id], onDelete: Cascade)
 
-  @@unique([sipId, dependsOnId])
+  @@unique([libraryId, dependsOnId])
   @@index([dependsOnId])
 }
 
-// NextAuth.js models
+// ---------------------------------------------------------------------------
+// NextAuth.js models (unchanged)
+// ---------------------------------------------------------------------------
+
 model Account {
   id                String  @id @default(cuid())
   userId            String
