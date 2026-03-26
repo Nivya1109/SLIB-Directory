@@ -1,16 +1,16 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { formatCurrency } from '@/lib/utils'
-import { ArrowLeft, ExternalLink } from 'lucide-react'
+import { ArrowLeft, ExternalLink, X, Plus, Code2, Globe, Github } from 'lucide-react'
 import { SIPSelector } from '@/components/SIPSelector'
+import { formatCurrency } from '@/lib/utils'
 
-interface SIP {
+interface Library {
   id: string
   name: string
   slug: string
@@ -18,261 +18,116 @@ interface SIP {
   description: string | null
   costMinUSD: number | null
   costMaxUSD: number | null
-  manufacturer: {
-    id: string
-    name: string
-    url: string | null
-  } | null
-  supplier: {
-    id: string
-    name: string
-    url: string | null
-  } | null
+  officialUrl: string | null
+  repositoryUrl: string | null
+  developer: { id: string; name: string; url: string | null } | null
+  organization: { id: string; name: string; url: string | null } | null
   categories: Array<{ id: string; name: string }>
-  oses: Array<{ id: string; name: string }>
-  versions: Array<{
-    id: string
-    name: string
-    releasedAt: string | null
-    notes: string | null
-  }>
-  components: Array<{
-    id: string
-    type: 'HARDWARE' | 'SOFTWARE'
-    name: string
-    spec: string | null
-    required: boolean
-  }>
-  dependencies: Array<{
-    id: string
-    name: string
-    slug: string
-  }>
+  platforms: Array<{ id: string; name: string }>
+  languages: Array<{ id: string; name: string }>
+  versions: Array<{ id: string; name: string; releasedAt: string | null; notes: string | null }>
+  features: Array<{ id: string; name: string; spec: string | null; required: boolean }>
+  dependencies: Array<{ id: string; name: string; slug: string }>
+}
+
+const MAX_COMPARE = 4
+const MIN_SLOTS = 2
+
+function priceLabel(lib: Library): string {
+  if (lib.costMinUSD === 0 || lib.costMinUSD === null) return 'Free'
+  if (lib.costMinUSD && lib.costMaxUSD) {
+    return lib.costMinUSD === lib.costMaxUSD
+      ? formatCurrency(lib.costMinUSD)
+      : `${formatCurrency(lib.costMinUSD)} – ${formatCurrency(lib.costMaxUSD)}`
+  }
+  return 'N/A'
 }
 
 export default function ComparePage() {
   const searchParams = useSearchParams()
   const router = useRouter()
 
-  const [leftSIP, setLeftSIP] = useState<SIP | null>(null)
-  const [rightSIP, setRightSIP] = useState<SIP | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  // URL stores only actual selected slugs — no empty strings
+  const slugsParam = searchParams.get('slugs') || ''
+  const urlSlugs: string[] = slugsParam
+    ? slugsParam.split(',').filter(Boolean).slice(0, MAX_COMPARE)
+    : []
 
-  const leftSlug = searchParams.get('left') || ''
-  const rightSlug = searchParams.get('right') || ''
+  // numSlots is local state so "Add library" slot works independently of URL
+  const [numSlots, setNumSlots] = useState(Math.max(MIN_SLOTS, urlSlugs.length))
+  const [libraries, setLibraries] = useState<(Library | null)[]>([])
+  const [loading, setLoading] = useState(false)
 
+  // Keep numSlots in sync when URL changes (e.g. navigating back)
   useEffect(() => {
-    const fetchSIPs = async () => {
-      try {
-        setError(null)
+    setNumSlots((prev) => Math.max(prev, urlSlugs.length, MIN_SLOTS))
+  }, [urlSlugs.length])
 
-        // Fetch left SIP if slug exists
-        if (leftSlug) {
-          const leftResponse = await fetch(`/api/sips/${leftSlug}`)
-          if (leftResponse.ok) {
-            const leftData = await leftResponse.json()
-            setLeftSIP(leftData)
-          } else {
-            setLeftSIP(null)
-          }
-        } else {
-          setLeftSIP(null)
-        }
-
-        // Fetch right SIP if slug exists
-        if (rightSlug) {
-          const rightResponse = await fetch(`/api/sips/${rightSlug}`)
-          if (rightResponse.ok) {
-            const rightData = await rightResponse.json()
-            setRightSIP(rightData)
-          } else {
-            setRightSIP(null)
-          }
-        } else {
-          setRightSIP(null)
-        }
-      } catch (err) {
-        console.error('Error fetching SIPs:', err)
-        setError('Failed to load products for comparison')
-      }
+  const fetchLibrary = useCallback(async (slug: string): Promise<Library | null> => {
+    try {
+      const res = await fetch(`/api/sips/${slug}`)
+      if (res.ok) return res.json()
+    } catch {
+      // ignore
     }
+    return null
+  }, [])
 
-    fetchSIPs()
-  }, [leftSlug, rightSlug])
+  // Re-fetch whenever URL slugs change
+  useEffect(() => {
+    setLoading(true)
+    Promise.all(
+      Array.from({ length: numSlots }, (_, i) =>
+        urlSlugs[i] ? fetchLibrary(urlSlugs[i]) : Promise.resolve(null)
+      )
+    )
+      .then(setLibraries)
+      .finally(() => setLoading(false))
+  }, [slugsParam, numSlots, fetchLibrary])
 
-  const handleSIPSelect = (position: 'left' | 'right', slug: string) => {
-    const params = new URLSearchParams(searchParams.toString())
-    params.set(position, slug)
-    router.push(`/compare?${params.toString()}`)
+  // Push updated slug list to URL
+  const updateURL = (slugs: string[]) => {
+    const valid = slugs.filter(Boolean).slice(0, MAX_COMPARE)
+    router.push(`/compare${valid.length ? `?slugs=${valid.join(',')}` : ''}`)
   }
 
-  const handleClear = () => {
+  const handleSelect = (slotIndex: number, slug: string) => {
+    const next = [...urlSlugs]
+    if (slug) {
+      next[slotIndex] = slug
+    } else {
+      next.splice(slotIndex, 1)
+    }
+    updateURL(next)
+  }
+
+  const handleRemove = (slotIndex: number) => {
+    const next = urlSlugs.filter((_, i) => i !== slotIndex)
+    updateURL(next)
+    // Only reduce slot count if it would go below MIN_SLOTS
+    setNumSlots((prev) => Math.max(MIN_SLOTS, prev - 1))
+  }
+
+  const handleAddSlot = () => {
+    if (numSlots < MAX_COMPARE) setNumSlots((prev) => prev + 1)
+  }
+
+  const handleClearAll = () => {
+    setNumSlots(MIN_SLOTS)
     router.push('/compare')
   }
 
-  // If one or both SIPs not selected, show selector interface
-  if (!leftSlug || !rightSlug || !leftSIP || !rightSIP) {
-    return (
-      <div className="container mx-auto px-4 py-8">
-        <Link
-          href="/search"
-          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground mb-6"
-        >
-          <ArrowLeft className="h-4 w-4 mr-1" />
-          Back to Search
-        </Link>
+  const loadedLibraries = libraries.filter((l): l is Library => l !== null)
+  const showComparison = loadedLibraries.length >= 2 && !loading
 
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">Compare SIPs</h1>
-          <p className="text-muted-foreground">
-            {leftSlug && leftSIP
-              ? 'Select a second product to compare'
-              : 'Select two products to compare side-by-side'}
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>
-                {leftSIP ? (
-                  <span className="text-primary">{leftSIP.name}</span>
-                ) : (
-                  'First Product'
-                )}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {leftSIP ? (
-                <div className="space-y-4">
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-2">Selected Product</p>
-                    <div className="flex flex-wrap gap-2">
-                      {leftSIP.categories.map((cat) => (
-                        <Badge key={cat.id} variant="secondary">
-                          {cat.name}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleSIPSelect('left', '')}
-                  >
-                    Change Selection
-                  </Button>
-                </div>
-              ) : (
-                <SIPSelector
-                  selectedSlug={leftSlug}
-                  onSelect={(slug) => handleSIPSelect('left', slug)}
-                  excludeSlug={rightSlug}
-                />
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>
-                {rightSIP ? (
-                  <span className="text-primary">{rightSIP.name}</span>
-                ) : (
-                  'Second Product'
-                )}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {rightSIP ? (
-                <div className="space-y-4">
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-2">Selected Product</p>
-                    <div className="flex flex-wrap gap-2">
-                      {rightSIP.categories.map((cat) => (
-                        <Badge key={cat.id} variant="secondary">
-                          {cat.name}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleSIPSelect('right', '')}
-                  >
-                    Change Selection
-                  </Button>
-                </div>
-              ) : (
-                <SIPSelector
-                  selectedSlug={rightSlug}
-                  onSelect={(slug) => handleSIPSelect('right', slug)}
-                  excludeSlug={leftSlug}
-                />
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    )
-  }
-
-  // Error state
-  if (error) {
-    return (
-      <div className="container mx-auto px-4 py-8">
-        <Card>
-          <CardHeader>
-            <CardTitle>Error</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground mb-4">{error}</p>
-            <Button onClick={handleClear}>Start New Comparison</Button>
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
-
-  // Comparison calculations
-  const leftHardware = leftSIP.components.filter((c) => c.type === 'HARDWARE')
-  const rightHardware = rightSIP.components.filter((c) => c.type === 'HARDWARE')
-  const leftSoftware = leftSIP.components.filter((c) => c.type === 'SOFTWARE')
-  const rightSoftware = rightSIP.components.filter((c) => c.type === 'SOFTWARE')
-
-  const leftPrice =
-    leftSIP.costMinUSD && leftSIP.costMaxUSD
-      ? leftSIP.costMinUSD === leftSIP.costMaxUSD
-        ? formatCurrency(leftSIP.costMinUSD)
-        : `${formatCurrency(leftSIP.costMinUSD)} - ${formatCurrency(leftSIP.costMaxUSD)}`
-      : 'N/A'
-
-  const rightPrice =
-    rightSIP.costMinUSD && rightSIP.costMaxUSD
-      ? rightSIP.costMinUSD === rightSIP.costMaxUSD
-        ? formatCurrency(rightSIP.costMinUSD)
-        : `${formatCurrency(rightSIP.costMinUSD)} - ${formatCurrency(rightSIP.costMaxUSD)}`
-      : 'N/A'
-
-  const priceDiffers =
-    leftSIP.costMinUSD !== rightSIP.costMinUSD || leftSIP.costMaxUSD !== rightSIP.costMaxUSD
-
-  const categoriesDiffer =
-    JSON.stringify(leftSIP.categories.map((c) => c.name).sort()) !==
-    JSON.stringify(rightSIP.categories.map((c) => c.name).sort())
-
-  const osesDiffer =
-    JSON.stringify(leftSIP.oses.map((o) => o.name).sort()) !==
-    JSON.stringify(rightSIP.oses.map((o) => o.name).sort())
-
-  const manufacturerDiffers = leftSIP.manufacturer?.name !== rightSIP.manufacturer?.name
-  const supplierDiffers = leftSIP.supplier?.name !== rightSIP.supplier?.name
+  const allFeatureNames = Array.from(
+    new Set(loadedLibraries.flatMap((l) => l.features.map((f) => f.name)))
+  ).sort()
 
   return (
     <div className="container mx-auto px-4 py-8">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+      <div className="flex items-center justify-between mb-6">
         <Link
           href="/search"
           className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
@@ -280,349 +135,259 @@ export default function ComparePage() {
           <ArrowLeft className="h-4 w-4 mr-1" />
           Back to Search
         </Link>
-        <Button variant="outline" onClick={handleClear} className="w-full sm:w-auto">
-          New Comparison
-        </Button>
+        {urlSlugs.length > 0 && (
+          <Button variant="outline" size="sm" onClick={handleClearAll}>
+            Clear All
+          </Button>
+        )}
       </div>
 
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-2">Product Comparison</h1>
-        <p className="text-muted-foreground">Side-by-side comparison of selected products</p>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold mb-1">Compare Libraries</h1>
+        <p className="text-sm text-muted-foreground">
+          Select up to {MAX_COMPARE} libraries to compare side by side
+        </p>
       </div>
 
-      {/* Comparison Table */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Left SIP */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-2xl">
-              <Link href={`/sip/${leftSIP.slug}`} className="hover:text-primary">
-                {leftSIP.name}
-              </Link>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {/* Price */}
-            <div className={priceDiffers ? 'bg-yellow-50 dark:bg-yellow-950 p-3 rounded' : ''}>
-              <p className="text-sm text-muted-foreground mb-1">Price</p>
-              <p className="text-xl font-bold text-primary">{leftPrice}</p>
-            </div>
+      {/* Slot selectors — always show numSlots slots */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
+        {Array.from({ length: numSlots }, (_, i) => {
+          const lib = libraries[i] ?? null
+          const slug = urlSlugs[i] ?? ''
 
-            {/* Categories */}
-            <div className={categoriesDiffer ? 'bg-yellow-50 dark:bg-yellow-950 p-3 rounded' : ''}>
-              <p className="text-sm text-muted-foreground mb-2">Categories</p>
-              <div className="flex flex-wrap gap-2">
-                {leftSIP.categories.map((cat) => (
-                  <Badge key={cat.id} variant="secondary">
-                    {cat.name}
-                  </Badge>
-                ))}
-              </div>
-            </div>
-
-            {/* Operating Systems */}
-            <div className={osesDiffer ? 'bg-yellow-50 dark:bg-yellow-950 p-3 rounded' : ''}>
-              <p className="text-sm text-muted-foreground mb-2">Operating Systems</p>
-              <div className="flex flex-wrap gap-2">
-                {leftSIP.oses.map((os) => (
-                  <Badge key={os.id} variant="outline">
-                    {os.name}
-                  </Badge>
-                ))}
-              </div>
-            </div>
-
-            {/* Manufacturer */}
-            {leftSIP.manufacturer && (
-              <div
-                className={manufacturerDiffers ? 'bg-yellow-50 dark:bg-yellow-950 p-3 rounded' : ''}
-              >
-                <p className="text-sm text-muted-foreground mb-1">Manufacturer</p>
-                <p className="text-sm font-medium">
-                  {leftSIP.manufacturer.url ? (
-                    <a
-                      href={leftSIP.manufacturer.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary hover:underline inline-flex items-center"
-                    >
-                      {leftSIP.manufacturer.name}
-                      <ExternalLink className="h-3 w-3 ml-1" />
-                    </a>
-                  ) : (
-                    leftSIP.manufacturer.name
-                  )}
-                </p>
-              </div>
-            )}
-
-            {/* Supplier */}
-            {leftSIP.supplier && (
-              <div className={supplierDiffers ? 'bg-yellow-50 dark:bg-yellow-950 p-3 rounded' : ''}>
-                <p className="text-sm text-muted-foreground mb-1">Supplier</p>
-                <p className="text-sm font-medium">
-                  {leftSIP.supplier.url ? (
-                    <a
-                      href={leftSIP.supplier.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary hover:underline inline-flex items-center"
-                    >
-                      {leftSIP.supplier.name}
-                      <ExternalLink className="h-3 w-3 ml-1" />
-                    </a>
-                  ) : (
-                    leftSIP.supplier.name
-                  )}
-                </p>
-              </div>
-            )}
-
-            {/* Components Count */}
-            <div>
-              <p className="text-sm text-muted-foreground mb-2">Components</p>
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm">Hardware</span>
-                  <span className="text-sm font-semibold">{leftHardware.length}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm">Software</span>
-                  <span className="text-sm font-semibold">{leftSoftware.length}</span>
-                </div>
-                <div className="flex justify-between items-center border-t pt-2">
-                  <span className="text-sm font-medium">Total</span>
-                  <span className="text-sm font-bold">{leftSIP.components.length}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Versions */}
-            <div>
-              <p className="text-sm text-muted-foreground mb-1">Versions Available</p>
-              <p className="text-sm font-semibold">{leftSIP.versions.length}</p>
-              {leftSIP.versions[0] && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  Latest: {leftSIP.versions[0].name}
-                </p>
+          return (
+            <div key={i} className="border rounded-lg p-3 relative min-h-[90px] flex flex-col justify-center">
+              {lib ? (
+                // Selected library — show name + remove button
+                <>
+                  <button
+                    onClick={() => handleRemove(i)}
+                    className="absolute top-2 right-2 p-1 rounded hover:bg-muted"
+                    aria-label="Remove"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                  <p className="font-semibold text-sm pr-6 mb-0.5 leading-tight">{lib.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {lib.languages.map((l) => l.name).slice(0, 2).join(', ')}
+                  </p>
+                  <button
+                    className="text-xs text-muted-foreground hover:text-primary mt-1 text-left underline underline-offset-2"
+                    onClick={() => handleSelect(i, '')}
+                  >
+                    Change
+                  </button>
+                </>
+              ) : loading && slug ? (
+                // Slug in URL but library not loaded yet
+                <div className="h-4 bg-muted rounded animate-pulse" />
+              ) : (
+                // Empty slot — show selector
+                <SIPSelector
+                  selectedSlug={slug}
+                  onSelect={(s) => handleSelect(i, s)}
+                  excludeSlugs={urlSlugs.filter((_, j) => j !== i)}
+                />
               )}
             </div>
+          )
+        })}
 
-            {/* Dependencies */}
-            {leftSIP.dependencies.length > 0 && (
-              <div>
-                <p className="text-sm text-muted-foreground mb-1">Dependencies</p>
-                <p className="text-sm font-semibold">{leftSIP.dependencies.length}</p>
-                <div className="mt-2 space-y-1">
-                  {leftSIP.dependencies.map((dep) => (
-                    <p key={dep.id} className="text-xs text-muted-foreground">
-                      • {dep.name}
-                    </p>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* View Details Button */}
-            <Link href={`/sip/${leftSIP.slug}`}>
-              <Button variant="outline" className="w-full">
-                View Full Details
-              </Button>
-            </Link>
-          </CardContent>
-        </Card>
-
-        {/* Right SIP */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-2xl">
-              <Link href={`/sip/${rightSIP.slug}`} className="hover:text-primary">
-                {rightSIP.name}
-              </Link>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {/* Price */}
-            <div className={priceDiffers ? 'bg-yellow-50 dark:bg-yellow-950 p-3 rounded' : ''}>
-              <p className="text-sm text-muted-foreground mb-1">Price</p>
-              <p className="text-xl font-bold text-primary">{rightPrice}</p>
-            </div>
-
-            {/* Categories */}
-            <div className={categoriesDiffer ? 'bg-yellow-50 dark:bg-yellow-950 p-3 rounded' : ''}>
-              <p className="text-sm text-muted-foreground mb-2">Categories</p>
-              <div className="flex flex-wrap gap-2">
-                {rightSIP.categories.map((cat) => (
-                  <Badge key={cat.id} variant="secondary">
-                    {cat.name}
-                  </Badge>
-                ))}
-              </div>
-            </div>
-
-            {/* Operating Systems */}
-            <div className={osesDiffer ? 'bg-yellow-50 dark:bg-yellow-950 p-3 rounded' : ''}>
-              <p className="text-sm text-muted-foreground mb-2">Operating Systems</p>
-              <div className="flex flex-wrap gap-2">
-                {rightSIP.oses.map((os) => (
-                  <Badge key={os.id} variant="outline">
-                    {os.name}
-                  </Badge>
-                ))}
-              </div>
-            </div>
-
-            {/* Manufacturer */}
-            {rightSIP.manufacturer && (
-              <div
-                className={manufacturerDiffers ? 'bg-yellow-50 dark:bg-yellow-950 p-3 rounded' : ''}
-              >
-                <p className="text-sm text-muted-foreground mb-1">Manufacturer</p>
-                <p className="text-sm font-medium">
-                  {rightSIP.manufacturer.url ? (
-                    <a
-                      href={rightSIP.manufacturer.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary hover:underline inline-flex items-center"
-                    >
-                      {rightSIP.manufacturer.name}
-                      <ExternalLink className="h-3 w-3 ml-1" />
-                    </a>
-                  ) : (
-                    rightSIP.manufacturer.name
-                  )}
-                </p>
-              </div>
-            )}
-
-            {/* Supplier */}
-            {rightSIP.supplier && (
-              <div className={supplierDiffers ? 'bg-yellow-50 dark:bg-yellow-950 p-3 rounded' : ''}>
-                <p className="text-sm text-muted-foreground mb-1">Supplier</p>
-                <p className="text-sm font-medium">
-                  {rightSIP.supplier.url ? (
-                    <a
-                      href={rightSIP.supplier.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary hover:underline inline-flex items-center"
-                    >
-                      {rightSIP.supplier.name}
-                      <ExternalLink className="h-3 w-3 ml-1" />
-                    </a>
-                  ) : (
-                    rightSIP.supplier.name
-                  )}
-                </p>
-              </div>
-            )}
-
-            {/* Components Count */}
-            <div>
-              <p className="text-sm text-muted-foreground mb-2">Components</p>
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <span className="text-sm">Hardware</span>
-                  <span className="text-sm font-semibold">{rightHardware.length}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-sm">Software</span>
-                  <span className="text-sm font-semibold">{rightSoftware.length}</span>
-                </div>
-                <div className="flex justify-between items-center border-t pt-2">
-                  <span className="text-sm font-medium">Total</span>
-                  <span className="text-sm font-bold">{rightSIP.components.length}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Versions */}
-            <div>
-              <p className="text-sm text-muted-foreground mb-1">Versions Available</p>
-              <p className="text-sm font-semibold">{rightSIP.versions.length}</p>
-              {rightSIP.versions[0] && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  Latest: {rightSIP.versions[0].name}
-                </p>
-              )}
-            </div>
-
-            {/* Dependencies */}
-            {rightSIP.dependencies.length > 0 && (
-              <div>
-                <p className="text-sm text-muted-foreground mb-1">Dependencies</p>
-                <p className="text-sm font-semibold">{rightSIP.dependencies.length}</p>
-                <div className="mt-2 space-y-1">
-                  {rightSIP.dependencies.map((dep) => (
-                    <p key={dep.id} className="text-xs text-muted-foreground">
-                      • {dep.name}
-                    </p>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* View Details Button */}
-            <Link href={`/sip/${rightSIP.slug}`}>
-              <Button variant="outline" className="w-full">
-                View Full Details
-              </Button>
-            </Link>
-          </CardContent>
-        </Card>
+        {/* Add library button — only show if under the max */}
+        {numSlots < MAX_COMPARE && (
+          <button
+            onClick={handleAddSlot}
+            className="border-2 border-dashed rounded-lg p-4 text-muted-foreground hover:border-primary hover:text-primary transition-colors flex flex-col items-center justify-center gap-2 min-h-[90px]"
+          >
+            <Plus className="h-5 w-5" />
+            <span className="text-xs font-medium">Add library</span>
+          </button>
+        )}
       </div>
 
-      {/* Key Differences Summary */}
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Key Differences</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {priceDiffers && (
-              <div className="border-l-4 border-yellow-500 pl-3">
-                <p className="text-sm font-semibold">Price</p>
-                <p className="text-xs text-muted-foreground">Different price ranges</p>
-              </div>
-            )}
-            {categoriesDiffer && (
-              <div className="border-l-4 border-yellow-500 pl-3">
-                <p className="text-sm font-semibold">Categories</p>
-                <p className="text-xs text-muted-foreground">Different product categories</p>
-              </div>
-            )}
-            {osesDiffer && (
-              <div className="border-l-4 border-yellow-500 pl-3">
-                <p className="text-sm font-semibold">Operating Systems</p>
-                <p className="text-xs text-muted-foreground">Different OS platforms</p>
-              </div>
-            )}
-            {manufacturerDiffers && (
-              <div className="border-l-4 border-yellow-500 pl-3">
-                <p className="text-sm font-semibold">Manufacturer</p>
-                <p className="text-xs text-muted-foreground">Different manufacturers</p>
-              </div>
-            )}
-            {leftHardware.length !== rightHardware.length && (
-              <div className="border-l-4 border-blue-500 pl-3">
-                <p className="text-sm font-semibold">Hardware Components</p>
-                <p className="text-xs text-muted-foreground">
-                  {leftHardware.length} vs {rightHardware.length}
-                </p>
-              </div>
-            )}
-            {leftSoftware.length !== rightSoftware.length && (
-              <div className="border-l-4 border-blue-500 pl-3">
-                <p className="text-sm font-semibold">Software Components</p>
-                <p className="text-xs text-muted-foreground">
-                  {leftSoftware.length} vs {rightSoftware.length}
-                </p>
-              </div>
-            )}
+      {/* Prompt to select more */}
+      {!loading && urlSlugs.length < 2 && (
+        <div className="text-center py-12 border rounded-lg bg-muted/30">
+          <p className="text-sm text-muted-foreground">
+            Select at least 2 libraries above to start comparing.
+          </p>
+        </div>
+      )}
+
+      {/* Loading state */}
+      {loading && (
+        <div className="text-center py-12 text-muted-foreground text-sm">
+          Loading libraries…
+        </div>
+      )}
+
+      {/* ── Comparison ── */}
+      {showComparison && (
+        <div>
+          {/* Side-by-side cards */}
+          <div
+            className="grid gap-4 mb-8"
+            style={{
+              gridTemplateColumns: `repeat(${loadedLibraries.length}, minmax(0, 1fr))`,
+            }}
+          >
+            {loadedLibraries.map((lib) => {
+              const author = lib.developer || lib.organization
+              const isFree = lib.costMinUSD === 0 || lib.costMinUSD === null
+              return (
+                <Card key={lib.id} className="flex flex-col">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base leading-tight">
+                      <Link href={`/sip/${lib.slug}`} className="hover:text-primary">
+                        {lib.name}
+                      </Link>
+                    </CardTitle>
+                    {author && (
+                      <p className="text-xs text-muted-foreground">by {author.name}</p>
+                    )}
+                  </CardHeader>
+
+                  <CardContent className="space-y-4 flex-1">
+                    {/* License */}
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wide">License</p>
+                      <Badge variant={isFree ? 'secondary' : 'default'}>
+                        {isFree ? 'Free' : priceLabel(lib)}
+                      </Badge>
+                    </div>
+
+                    {/* Categories */}
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wide">Category</p>
+                      <div className="flex flex-wrap gap-1">
+                        {lib.categories.map((c) => (
+                          <Badge key={c.id} variant="secondary" className="text-xs">
+                            {c.name}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Languages */}
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wide flex items-center gap-1">
+                        <Code2 className="h-3 w-3" /> Languages
+                      </p>
+                      <p className="text-sm">{lib.languages.map((l) => l.name).join(', ') || '—'}</p>
+                    </div>
+
+                    {/* Platforms */}
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wide flex items-center gap-1">
+                        <Globe className="h-3 w-3" /> Platforms
+                      </p>
+                      <p className="text-sm">{lib.platforms.map((p) => p.name).join(', ') || '—'}</p>
+                    </div>
+
+                    {/* Latest version */}
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wide">Latest Version</p>
+                      <p className="text-sm font-medium">
+                        {lib.versions[0] ? `v${lib.versions[0].name}` : '—'}
+                      </p>
+                    </div>
+
+                    {/* Counts */}
+                    <div className="grid grid-cols-2 gap-2 text-center border rounded-lg p-2">
+                      <div>
+                        <p className="text-lg font-bold">{lib.features.length}</p>
+                        <p className="text-xs text-muted-foreground">Features</p>
+                      </div>
+                      <div>
+                        <p className="text-lg font-bold">{lib.dependencies.length}</p>
+                        <p className="text-xs text-muted-foreground">Deps</p>
+                      </div>
+                    </div>
+
+                    {/* External links */}
+                    <div className="space-y-1 pt-1 border-t">
+                      {lib.officialUrl && (
+                        <a
+                          href={lib.officialUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-xs text-primary hover:underline"
+                        >
+                          <Globe className="h-3 w-3" /> Docs
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      )}
+                      {lib.repositoryUrl && (
+                        <a
+                          href={lib.repositoryUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-xs text-primary hover:underline"
+                        >
+                          <Github className="h-3 w-3" /> Repo
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      )}
+                    </div>
+
+                    <Link href={`/sip/${lib.slug}`}>
+                      <Button variant="outline" size="sm" className="w-full">
+                        Full Details
+                      </Button>
+                    </Link>
+                  </CardContent>
+                </Card>
+              )
+            })}
           </div>
-        </CardContent>
-      </Card>
+
+          {/* Feature matrix */}
+          {allFeatureNames.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Feature Matrix</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b">
+                        <th className="text-left py-2 pr-6 font-medium text-muted-foreground">
+                          Feature
+                        </th>
+                        {loadedLibraries.map((lib) => (
+                          <th key={lib.id} className="text-center py-2 px-3 font-medium">
+                            {lib.name}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {allFeatureNames.map((name) => (
+                        <tr key={name} className="border-b last:border-0 hover:bg-muted/30">
+                          <td className="py-2 pr-6 text-muted-foreground">{name}</td>
+                          {loadedLibraries.map((lib) => {
+                            const has = lib.features.some((f) => f.name === name)
+                            return (
+                              <td key={lib.id} className="text-center py-2 px-3">
+                                {has ? (
+                                  <span className="text-green-600 font-bold text-base">✓</span>
+                                ) : (
+                                  <span className="text-muted-foreground text-base">—</span>
+                                )}
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
     </div>
   )
 }

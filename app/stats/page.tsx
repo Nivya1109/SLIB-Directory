@@ -20,16 +20,22 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
 } from 'recharts'
-import { TrendingUp, Package, Cpu, Code } from 'lucide-react'
+import { BookOpen, Layers, Code2, Building2 } from 'lucide-react'
 
 interface StatsData {
-  totalSIPs: number
-  sipsPerCategory: Array<{ category: string; count: number }>
-  osDistribution: Array<{ category: string; os: string; count: number }>
-  avgCostPerCategory: Array<{ category: string; avgMin: number | null; avgMax: number | null }>
-  componentStats: Array<{ category: string; hardware: number; software: number }>
+  totalLibraries: number
+  librariesPerCategory: Array<{ category: string; count: number }>
+  librariesPerLanguage: Array<{ language: string; count: number }>
+  platformDistribution: Array<{ category: string; platform: string; count: number }>
+  librariesByOrg: Array<{ org: string; count: number }>
+  licenseBreakdown: { free: number; paid: number }
 }
+
+const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316']
 
 export default function StatsPage() {
   const router = useRouter()
@@ -41,79 +47,58 @@ export default function StatsPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true)
-
-        const [statsRes, categoriesRes] = await Promise.all([
-          fetch(`/api/stats${selectedCategory ? `?category=${selectedCategory}` : ''}`),
-          fetch('/api/categories'),
-        ])
-
-        if (statsRes.ok && categoriesRes.ok) {
-          const [statsData, categoriesData] = await Promise.all([
-            statsRes.json(),
-            categoriesRes.json(),
-          ])
-          setStats(statsData)
-          setCategories(categoriesData)
-        }
-      } catch (error) {
-        console.error('Failed to fetch stats:', error)
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchData()
+    setLoading(true)
+    Promise.all([
+      fetch(`/api/stats${selectedCategory ? `?category=${encodeURIComponent(selectedCategory)}` : ''}`).then((r) => r.json()),
+      fetch('/api/categories').then((r) => r.json()),
+    ])
+      .then(([statsData, catsData]) => {
+        setStats(statsData)
+        setCategories(catsData)
+      })
+      .catch((e) => console.error('Failed to fetch stats:', e))
+      .finally(() => setLoading(false))
   }, [selectedCategory])
 
   const handleCategoryChange = (value: string) => {
-    const newCategory = value === 'all' ? '' : value
-    router.push(`/stats${newCategory ? `?category=${newCategory}` : ''}`)
+    const cat = value === 'all' ? '' : value
+    router.push(`/stats${cat ? `?category=${encodeURIComponent(cat)}` : ''}`)
   }
 
-  // Transform OS distribution data for grouped bar chart
-  const osChartData = stats?.osDistribution.reduce(
+  // Build platform grouped chart data
+  const platformChartData = (stats?.platformDistribution ?? []).reduce(
     (acc, item) => {
       const existing = acc.find((d) => d.category === item.category)
       if (existing) {
-        existing[item.os] = item.count
+        existing[item.platform] = item.count
       } else {
-        acc.push({
-          category: item.category,
-          [item.os]: item.count,
-        })
+        acc.push({ category: item.category, [item.platform]: item.count })
       }
       return acc
     },
     [] as Array<Record<string, string | number>>
   )
 
-  // Get unique OS names for the chart
-  const osNames = Array.from(
-    new Set(stats?.osDistribution.map((item) => item.os) || [])
+  const platformNames = Array.from(
+    new Set((stats?.platformDistribution ?? []).map((d) => d.platform))
   )
 
-  // Colors for different OS
-  const osColors = [
-    '#3b82f6', // blue
-    '#10b981', // green
-    '#f59e0b', // amber
-    '#ef4444', // red
-    '#8b5cf6', // purple
-  ]
+  const licenseData = stats
+    ? [
+        { name: 'Free / Open Source', value: stats.licenseBreakdown.free },
+        { name: 'Paid / Commercial', value: stats.licenseBreakdown.paid },
+      ]
+    : []
 
   if (loading) {
     return (
-      <div className="container mx-auto px-4 py-8">
-        <div className="animate-pulse space-y-4">
-          <div className="h-8 w-64 bg-muted rounded" />
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {[1, 2, 3, 4].map((i) => (
-              <div key={i} className="h-32 bg-muted rounded" />
-            ))}
-          </div>
+      <div className="container mx-auto px-4 py-8 animate-pulse space-y-6">
+        <div className="h-8 w-64 bg-muted rounded" />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map((i) => <div key={i} className="h-28 bg-muted rounded" />)}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {[1, 2].map((i) => <div key={i} className="h-72 bg-muted rounded" />)}
         </div>
       </div>
     )
@@ -123,12 +108,8 @@ export default function StatsPage() {
     return (
       <div className="container mx-auto px-4 py-8">
         <Card>
-          <CardHeader>
-            <CardTitle>Error</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">Failed to load statistics</p>
-          </CardContent>
+          <CardHeader><CardTitle>Error</CardTitle></CardHeader>
+          <CardContent><p className="text-sm text-muted-foreground">Failed to load statistics.</p></CardContent>
         </Card>
       </div>
     )
@@ -138,194 +119,195 @@ export default function StatsPage() {
     <div className="container mx-auto px-4 py-8">
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-4">Statistics Dashboard</h1>
-        <p className="text-muted-foreground mb-4">
-          Comprehensive analytics and insights about SIP products
-        </p>
+        <h1 className="text-3xl font-bold mb-2">Statistics Dashboard</h1>
+        <p className="text-muted-foreground mb-6">Insights across all libraries in the directory</p>
 
-        {/* Category Filter */}
         <div className="max-w-xs">
-          <Label htmlFor="category-filter" className="mb-2 block">
-            Filter by Category
-          </Label>
+          <Label htmlFor="cat-filter" className="mb-2 block text-sm">Filter by Category</Label>
           <Select value={selectedCategory || 'all'} onValueChange={handleCategoryChange}>
-            <SelectTrigger id="category-filter">
+            <SelectTrigger id="cat-filter">
               <SelectValue placeholder="All Categories" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Categories</SelectItem>
-              {categories.map((cat) => (
-                <SelectItem key={cat.id} value={cat.name}>
-                  {cat.name}
-                </SelectItem>
+              {categories.map((c) => (
+                <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        {/* Total SIPs */}
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total SIPs</CardTitle>
-            <Package className="h-4 w-4 text-muted-foreground" />
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Total Libraries</CardTitle>
+            <BookOpen className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.totalSIPs}</div>
+            <div className="text-3xl font-bold">{stats.totalLibraries}</div>
             <p className="text-xs text-muted-foreground mt-1">
               {selectedCategory ? `in ${selectedCategory}` : 'across all categories'}
             </p>
           </CardContent>
         </Card>
 
-        {/* Categories Count */}
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium">Categories</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+            <Layers className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.sipsPerCategory.length}</div>
+            <div className="text-3xl font-bold">{stats.librariesPerCategory.length}</div>
+            <p className="text-xs text-muted-foreground mt-1">unique categories</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Languages</CardTitle>
+            <Code2 className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold">{stats.librariesPerLanguage.length}</div>
+            <p className="text-xs text-muted-foreground mt-1">programming languages</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Free Libraries</CardTitle>
+            <Building2 className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold">{stats.licenseBreakdown.free}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              {selectedCategory ? 'filtered' : 'total categories'}
+              of {stats.totalLibraries} are free / open source
             </p>
           </CardContent>
         </Card>
-
-        {/* Total Hardware Components */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Hardware Components</CardTitle>
-            <Cpu className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {stats.componentStats.reduce((sum, item) => sum + item.hardware, 0)}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">total across all SIPs</p>
-          </CardContent>
-        </Card>
-
-        {/* Total Software Components */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Software Components</CardTitle>
-            <Code className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {stats.componentStats.reduce((sum, item) => sum + item.software, 0)}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">total across all SIPs</p>
-          </CardContent>
-        </Card>
       </div>
 
-      {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-        {/* SIPs per Category */}
+      {/* Charts row 1 */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        {/* Libraries per category */}
         <Card>
           <CardHeader>
-            <CardTitle>SIPs per Category</CardTitle>
-            <CardDescription>Number of products in each category</CardDescription>
+            <CardTitle>Libraries per Category</CardTitle>
+            <CardDescription>How many libraries exist in each category</CardDescription>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={stats.sipsPerCategory}>
+              <BarChart data={stats.librariesPerCategory} layout="vertical" margin={{ left: 40 }}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="category" />
-                <YAxis />
+                <XAxis type="number" allowDecimals={false} />
+                <YAxis dataKey="category" type="category" width={140} tick={{ fontSize: 12 }} />
                 <Tooltip />
-                <Bar dataKey="count" fill="#3b82f6" name="Products" />
+                <Bar dataKey="count" fill="#3b82f6" name="Libraries" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
 
-        {/* Average Cost per Category */}
+        {/* Libraries per language */}
         <Card>
           <CardHeader>
-            <CardTitle>Average Cost per Category</CardTitle>
-            <CardDescription>Average price range by category</CardDescription>
+            <CardTitle>Libraries by Language</CardTitle>
+            <CardDescription>Programming language distribution</CardDescription>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
-              <BarChart
-                data={stats.avgCostPerCategory.map((item) => ({
-                  ...item,
-                  avgMin: item.avgMin ? item.avgMin / 100 : 0,
-                  avgMax: item.avgMax ? item.avgMax / 100 : 0,
-                }))}
-              >
+              <BarChart data={stats.librariesPerLanguage} layout="vertical" margin={{ left: 40 }}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="category" />
-                <YAxis
-                  tickFormatter={(value) => `$${value}`}
-                  label={{ value: 'Price (USD)', angle: -90, position: 'insideLeft' }}
-                />
-                <Tooltip
-                  formatter={(value: number) => `$${value.toFixed(2)}`}
-                  labelStyle={{ color: '#000' }}
-                />
-                <Legend />
-                <Bar dataKey="avgMin" fill="#10b981" name="Avg Min Price" />
-                <Bar dataKey="avgMax" fill="#f59e0b" name="Avg Max Price" />
+                <XAxis type="number" allowDecimals={false} />
+                <YAxis dataKey="language" type="category" width={100} tick={{ fontSize: 12 }} />
+                <Tooltip />
+                <Bar dataKey="count" fill="#10b981" name="Libraries" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
       </div>
 
-      {/* OS Distribution */}
-      <Card className="mb-8">
-        <CardHeader>
-          <CardTitle>OS Distribution per Category</CardTitle>
-          <CardDescription>Operating systems used in each category</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ResponsiveContainer width="100%" height={400}>
-            <BarChart data={osChartData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="category" />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              {osNames.map((osName, index) => (
-                <Bar
-                  key={osName}
-                  dataKey={osName}
-                  fill={osColors[index % osColors.length]}
-                  name={osName}
-                />
-              ))}
-            </BarChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
+      {/* Charts row 2 */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        {/* Platform distribution */}
+        {platformChartData.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Platform Support per Category</CardTitle>
+              <CardDescription>Which platforms each category supports</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={320}>
+                <BarChart data={platformChartData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="category" tick={{ fontSize: 11 }} />
+                  <YAxis allowDecimals={false} />
+                  <Tooltip />
+                  <Legend />
+                  {platformNames.map((name, i) => (
+                    <Bar key={name} dataKey={name} fill={COLORS[i % COLORS.length]} name={name} />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        )}
 
-      {/* Component Distribution */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Component Distribution</CardTitle>
-          <CardDescription>Hardware vs Software components by category</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={stats.componentStats}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="category" />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="hardware" fill="#3b82f6" name="Hardware" />
-              <Bar dataKey="software" fill="#10b981" name="Software" />
-            </BarChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
+        {/* License breakdown pie */}
+        <Card>
+          <CardHeader>
+            <CardTitle>License Breakdown</CardTitle>
+            <CardDescription>Free vs paid libraries</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col items-center justify-center">
+            <ResponsiveContainer width="100%" height={260}>
+              <PieChart>
+                <Pie
+                  data={licenseData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={70}
+                  outerRadius={110}
+                  paddingAngle={3}
+                  dataKey="value"
+                  label={({ name, value }) => `${name}: ${value}`}
+                  labelLine={false}
+                >
+                  {licenseData.map((_, i) => (
+                    <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Top organizations */}
+      {stats.librariesByOrg.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Top Organizations</CardTitle>
+            <CardDescription>Organizations with the most libraries in the directory</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={stats.librariesByOrg} layout="vertical" margin={{ left: 40 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis type="number" allowDecimals={false} />
+                <YAxis dataKey="org" type="category" width={160} tick={{ fontSize: 12 }} />
+                <Tooltip />
+                <Bar dataKey="count" fill="#8b5cf6" name="Libraries" radius={[0, 4, 4, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }
-

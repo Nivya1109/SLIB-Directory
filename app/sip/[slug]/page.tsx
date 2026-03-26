@@ -7,375 +7,253 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { formatCurrency } from '@/lib/utils'
-import { ArrowLeft, ExternalLink, CheckCircle2, Circle } from 'lucide-react'
+import {
+  ArrowLeft,
+  ExternalLink,
+  CheckCircle2,
+  Circle,
+  Github,
+  Globe,
+  Code2,
+} from 'lucide-react'
 
-interface SIP {
+interface Library {
   id: string
   name: string
   slug: string
   shortSummary: string | null
   description: string | null
+  functionDesc: string | null
+  socialImpact: string | null
+  exampleCode: string | null
+  officialUrl: string | null
+  repositoryUrl: string | null
   costMinUSD: number | null
   costMaxUSD: number | null
   scrapedAt: string | null
   dataSource: string | null
-  manufacturer: {
-    id: string
-    name: string
-    url: string | null
-  } | null
-  supplier: {
-    id: string
-    name: string
-    url: string | null
-  } | null
+  developer: { id: string; name: string; url: string | null } | null
+  organization: { id: string; name: string; url: string | null } | null
   categories: Array<{ id: string; name: string }>
-  oses: Array<{ id: string; name: string }>
-  versions: Array<{
-    id: string
-    name: string
-    releasedAt: string | null
-    notes: string | null
-  }>
-  components: Array<{
-    id: string
-    type: 'HARDWARE' | 'SOFTWARE'
-    name: string
-    spec: string | null
-    required: boolean
-  }>
-  dependencies: Array<{
-    id: string
-    name: string
-    slug: string
-  }>
+  platforms: Array<{ id: string; name: string }>
+  languages: Array<{ id: string; name: string }>
+  versions: Array<{ id: string; name: string; releasedAt: string | null; notes: string | null }>
+  features: Array<{ id: string; name: string; spec: string | null; required: boolean }>
+  dependencies: Array<{ id: string; name: string; slug: string }>
 }
 
-export default function SIPDetailPage() {
+export default function LibraryDetailPage() {
   const params = useParams()
   const slug = params.slug as string
 
-  const [sip, setSip] = useState<SIP | null>(null)
+  const [library, setLibrary] = useState<Library | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    const fetchSIP = async () => {
+    const fetchLibrary = async () => {
       try {
         setLoading(true)
         setError(null)
-
         const response = await fetch(`/api/sips/${slug}`)
-
         if (response.status === 404) {
-          setError('Product not found')
+          setError('Library not found')
           return
         }
-
-        if (!response.ok) {
-          throw new Error('Failed to fetch product details')
-        }
-
+        if (!response.ok) throw new Error('Failed to fetch library')
         const data = await response.json()
-        setSip(data)
+        setLibrary(data)
       } catch (err) {
-        console.error('Error fetching SIP:', err)
-        setError('Failed to load product details')
+        console.error('Error fetching library:', err)
+        setError('Failed to load library details')
       } finally {
         setLoading(false)
       }
     }
-
-    fetchSIP()
+    fetchLibrary()
   }, [slug])
 
   if (loading) {
     return (
-      <div className="container mx-auto px-4 py-8">
-        <div className="animate-pulse">
-          <div className="h-8 w-64 bg-muted rounded mb-4" />
-          <div className="h-4 w-96 bg-muted rounded mb-8" />
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 h-96 bg-muted rounded" />
-            <div className="h-96 bg-muted rounded" />
-          </div>
+      <div className="container mx-auto px-4 py-8 animate-pulse">
+        <div className="h-8 w-64 bg-muted rounded mb-4" />
+        <div className="h-4 w-96 bg-muted rounded mb-8" />
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 h-96 bg-muted rounded" />
+          <div className="h-96 bg-muted rounded" />
         </div>
       </div>
     )
   }
 
-  if (error || !sip) {
+  if (error || !library) {
     return (
       <div className="container mx-auto px-4 py-8">
-        <Link
-          href="/search"
-          className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground mb-4"
-        >
+        <Link href="/search" className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground mb-4">
           <ArrowLeft className="h-4 w-4 mr-1" />
           Back to Search
         </Link>
         <Card>
           <CardHeader>
-            <CardTitle>Error</CardTitle>
-            <CardDescription>{error || 'Product not found'}</CardDescription>
+            <CardTitle>Not Found</CardTitle>
+            <CardDescription>{error || 'Library not found'}</CardDescription>
           </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">
-              The product you are looking for does not exist or could not be loaded.
-            </p>
-          </CardContent>
         </Card>
       </div>
     )
   }
 
-  const hardwareComponents = sip.components.filter((c) => c.type === 'HARDWARE')
-  const softwareComponents = sip.components.filter((c) => c.type === 'SOFTWARE')
+  const isFree = library.costMinUSD === 0 || library.costMinUSD === null
+  const priceLabel = isFree
+    ? 'Free / Open Source'
+    : library.costMinUSD && library.costMaxUSD
+    ? library.costMinUSD === library.costMaxUSD
+      ? formatCurrency(library.costMinUSD)
+      : `${formatCurrency(library.costMinUSD)} – ${formatCurrency(library.costMaxUSD)}`
+    : 'Pricing not available'
 
-  const priceRange =
-    sip.costMinUSD && sip.costMaxUSD
-      ? sip.costMinUSD === sip.costMaxUSD
-        ? formatCurrency(sip.costMinUSD)
-        : `${formatCurrency(sip.costMinUSD)} - ${formatCurrency(sip.costMaxUSD)}`
-      : 'Price not available'
+  const author = library.developer || library.organization
 
   return (
     <div className="container mx-auto px-4 py-8">
-      {/* Back Button */}
-      <Link
-        href="/search"
-        className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground mb-6"
-      >
+      {/* Back */}
+      <Link href="/search" className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground mb-6">
         <ArrowLeft className="h-4 w-4 mr-1" />
         Back to Search
       </Link>
 
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-4xl font-bold mb-2">{sip.name}</h1>
-        {sip.shortSummary && (
-          <p className="text-xl text-muted-foreground mb-4">{sip.shortSummary}</p>
+        <div className="flex flex-wrap items-center gap-3 mb-2">
+          <h1 className="text-4xl font-bold">{library.name}</h1>
+          <Badge variant={isFree ? 'secondary' : 'default'}>
+            {isFree ? 'Free' : 'Paid'}
+          </Badge>
+        </div>
+
+        {library.shortSummary && (
+          <p className="text-xl text-muted-foreground mb-4">{library.shortSummary}</p>
         )}
 
+        {/* Language + category badges */}
         <div className="flex flex-wrap gap-2 mb-4">
-          {sip.categories.map((category) => (
-            <Badge key={category.id} variant="secondary">
-              {category.name}
+          {library.categories.map((c) => (
+            <Badge key={c.id} variant="secondary">{c.name}</Badge>
+          ))}
+          {library.languages.map((l) => (
+            <Badge key={l.id} variant="outline">
+              <Code2 className="h-3 w-3 mr-1" />
+              {l.name}
             </Badge>
           ))}
-          {sip.oses.map((os) => (
-            <Badge key={os.id} variant="outline">
-              {os.name}
-            </Badge>
+          {library.platforms.map((p) => (
+            <Badge key={p.id} variant="outline">{p.name}</Badge>
           ))}
         </div>
 
-        {/* Data Source Info */}
-        {sip.scrapedAt && sip.dataSource && (
-          <p className="text-sm text-muted-foreground italic">
-            Data {sip.dataSource === 'scraped' ? 'extracted from manufacturer website' : 'from ' + sip.dataSource} on{' '}
-            {new Date(sip.scrapedAt).toLocaleDateString('en-US', {
-              year: 'numeric',
-              month: 'long',
-              day: 'numeric',
-            })}
-          </p>
-        )}
-
-        <p className="text-2xl font-bold text-primary">{priceRange}</p>
+        {/* External links */}
+        <div className="flex flex-wrap gap-3">
+          {library.officialUrl && (
+            <a href={library.officialUrl} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
+              <Globe className="h-4 w-4" /> Documentation
+            </a>
+          )}
+          {library.repositoryUrl && (
+            <a href={library.repositoryUrl} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
+              <Github className="h-4 w-4" /> Repository
+            </a>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Main Content - Tabs */}
+        {/* Main Content */}
         <div className="lg:col-span-2">
           <Tabs defaultValue="overview" className="w-full">
             <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="hardware">Hardware</TabsTrigger>
-              <TabsTrigger value="software">Software</TabsTrigger>
+              <TabsTrigger value="features">Features</TabsTrigger>
+              <TabsTrigger value="example">Example</TabsTrigger>
               <TabsTrigger value="versions">Versions</TabsTrigger>
             </TabsList>
 
-            {/* Overview Tab */}
+            {/* Overview */}
             <TabsContent value="overview" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Description</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm leading-relaxed">
-                    {sip.description || sip.shortSummary || 'No description available.'}
-                  </p>
-                </CardContent>
-              </Card>
+              {library.description && (
+                <Card>
+                  <CardHeader><CardTitle>Description</CardTitle></CardHeader>
+                  <CardContent>
+                    <p className="text-sm leading-relaxed">{library.description}</p>
+                  </CardContent>
+                </Card>
+              )}
+
+              {library.functionDesc && (
+                <Card>
+                  <CardHeader><CardTitle>Use Case</CardTitle></CardHeader>
+                  <CardContent>
+                    <p className="text-sm leading-relaxed">{library.functionDesc}</p>
+                  </CardContent>
+                </Card>
+              )}
+
+              {library.socialImpact && (
+                <Card>
+                  <CardHeader><CardTitle>Community Impact</CardTitle></CardHeader>
+                  <CardContent>
+                    <p className="text-sm leading-relaxed">{library.socialImpact}</p>
+                  </CardContent>
+                </Card>
+              )}
 
               <Card>
-                <CardHeader>
-                  <CardTitle>Product Information</CardTitle>
-                </CardHeader>
+                <CardHeader><CardTitle>Library Information</CardTitle></CardHeader>
                 <CardContent className="space-y-3">
-                  {sip.manufacturer && (
+                  {author && (
                     <div className="flex justify-between items-center py-2 border-b">
-                      <span className="text-sm font-medium">Manufacturer</span>
+                      <span className="text-sm font-medium">{library.developer ? 'Developer' : 'Organization'}</span>
                       <span className="text-sm">
-                        {sip.manufacturer.url ? (
-                          <a
-                            href={sip.manufacturer.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-primary hover:underline inline-flex items-center"
-                          >
-                            {sip.manufacturer.name}
-                            <ExternalLink className="h-3 w-3 ml-1" />
+                        {author.url ? (
+                          <a href={author.url} target="_blank" rel="noopener noreferrer"
+                            className="text-primary hover:underline inline-flex items-center gap-1">
+                            {author.name} <ExternalLink className="h-3 w-3" />
                           </a>
-                        ) : (
-                          sip.manufacturer.name
-                        )}
+                        ) : author.name}
                       </span>
                     </div>
                   )}
-
-                  {sip.supplier && (
-                    <div className="flex justify-between items-center py-2 border-b">
-                      <span className="text-sm font-medium">Supplier</span>
-                      <span className="text-sm">
-                        {sip.supplier.url ? (
-                          <a
-                            href={sip.supplier.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-primary hover:underline inline-flex items-center"
-                          >
-                            {sip.supplier.name}
-                            <ExternalLink className="h-3 w-3 ml-1" />
-                          </a>
-                        ) : (
-                          sip.supplier.name
-                        )}
-                      </span>
-                    </div>
-                  )}
-
+                  <div className="flex justify-between items-center py-2 border-b">
+                    <span className="text-sm font-medium">Pricing</span>
+                    <span className="text-sm font-semibold">{priceLabel}</span>
+                  </div>
                   <div className="flex justify-between items-center py-2 border-b">
                     <span className="text-sm font-medium">Categories</span>
-                    <span className="text-sm">
-                      {sip.categories.map((c) => c.name).join(', ')}
-                    </span>
+                    <span className="text-sm">{library.categories.map((c) => c.name).join(', ')}</span>
                   </div>
-
+                  <div className="flex justify-between items-center py-2 border-b">
+                    <span className="text-sm font-medium">Languages</span>
+                    <span className="text-sm">{library.languages.map((l) => l.name).join(', ')}</span>
+                  </div>
                   <div className="flex justify-between items-center py-2">
-                    <span className="text-sm font-medium">Operating Systems</span>
-                    <span className="text-sm">{sip.oses.map((o) => o.name).join(', ')}</span>
+                    <span className="text-sm font-medium">Compatible Platforms</span>
+                    <span className="text-sm">{library.platforms.map((p) => p.name).join(', ')}</span>
                   </div>
                 </CardContent>
               </Card>
-            </TabsContent>
 
-            {/* Hardware Tab */}
-            <TabsContent value="hardware" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Hardware Components</CardTitle>
-                  <CardDescription>
-                    {hardwareComponents.length} component
-                    {hardwareComponents.length !== 1 ? 's' : ''}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {hardwareComponents.length > 0 ? (
-                    <div className="space-y-4">
-                      {hardwareComponents.map((component) => (
-                        <div key={component.id} className="border rounded-lg p-4">
-                          <div className="flex items-start justify-between mb-2">
-                            <h4 className="font-semibold flex items-center">
-                              {component.required ? (
-                                <CheckCircle2 className="h-4 w-4 mr-2 text-green-600" />
-                              ) : (
-                                <Circle className="h-4 w-4 mr-2 text-muted-foreground" />
-                              )}
-                              {component.name}
-                            </h4>
-                            {!component.required && (
-                              <Badge variant="outline" className="text-xs">
-                                Optional
-                              </Badge>
-                            )}
-                          </div>
-                          {component.spec && (
-                            <p className="text-sm text-muted-foreground">{component.spec}</p>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      No hardware components listed.
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* Software Tab */}
-            <TabsContent value="software" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Software Components</CardTitle>
-                  <CardDescription>
-                    {softwareComponents.length} component
-                    {softwareComponents.length !== 1 ? 's' : ''}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {softwareComponents.length > 0 ? (
-                    <div className="space-y-4">
-                      {softwareComponents.map((component) => (
-                        <div key={component.id} className="border rounded-lg p-4">
-                          <div className="flex items-start justify-between mb-2">
-                            <h4 className="font-semibold flex items-center">
-                              {component.required ? (
-                                <CheckCircle2 className="h-4 w-4 mr-2 text-green-600" />
-                              ) : (
-                                <Circle className="h-4 w-4 mr-2 text-muted-foreground" />
-                              )}
-                              {component.name}
-                            </h4>
-                            {!component.required && (
-                              <Badge variant="outline" className="text-xs">
-                                Optional
-                              </Badge>
-                            )}
-                          </div>
-                          {component.spec && (
-                            <p className="text-sm text-muted-foreground">{component.spec}</p>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      No software components listed.
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-
-              {sip.dependencies.length > 0 && (
+              {library.dependencies.length > 0 && (
                 <Card>
                   <CardHeader>
                     <CardTitle>Dependencies</CardTitle>
-                    <CardDescription>
-                      Products this SIP depends on or integrates with
-                    </CardDescription>
+                    <CardDescription>Libraries this package depends on</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-2">
-                      {sip.dependencies.map((dep) => (
-                        <Link
-                          key={dep.id}
-                          href={`/sip/${dep.slug}`}
-                          className="block p-3 border rounded-lg hover:bg-accent transition-colors"
-                        >
+                      {library.dependencies.map((dep) => (
+                        <Link key={dep.id} href={`/sip/${dep.slug}`}
+                          className="block p-3 border rounded-lg hover:bg-accent transition-colors">
                           <p className="text-sm font-medium">{dep.name}</p>
                         </Link>
                       ))}
@@ -385,31 +263,82 @@ export default function SIPDetailPage() {
               )}
             </TabsContent>
 
-            {/* Versions Tab */}
-            <TabsContent value="versions" className="space-y-4">
+            {/* Features */}
+            <TabsContent value="features">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Key Features</CardTitle>
+                  <CardDescription>{library.features.length} feature{library.features.length !== 1 ? 's' : ''}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {library.features.length > 0 ? (
+                    <div className="space-y-3">
+                      {library.features.map((f) => (
+                        <div key={f.id} className="border rounded-lg p-4">
+                          <div className="flex items-start justify-between mb-1">
+                            <h4 className="font-semibold flex items-center gap-2">
+                              {f.required
+                                ? <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
+                                : <Circle className="h-4 w-4 text-muted-foreground shrink-0" />}
+                              {f.name}
+                            </h4>
+                            {!f.required && (
+                              <Badge variant="outline" className="text-xs shrink-0">Optional</Badge>
+                            )}
+                          </div>
+                          {f.spec && <p className="text-sm text-muted-foreground ml-6">{f.spec}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No features listed.</p>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* Example Code */}
+            <TabsContent value="example">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Example Code</CardTitle>
+                  <CardDescription>Quick-start usage example</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {library.exampleCode ? (
+                    <pre className="bg-muted rounded-lg p-4 overflow-x-auto text-sm leading-relaxed font-mono whitespace-pre">
+                      <code>{library.exampleCode}</code>
+                    </pre>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No example code available.</p>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* Versions */}
+            <TabsContent value="versions">
               <Card>
                 <CardHeader>
                   <CardTitle>Version History</CardTitle>
-                  <CardDescription>
-                    {sip.versions.length} version{sip.versions.length !== 1 ? 's' : ''}
-                  </CardDescription>
+                  <CardDescription>{library.versions.length} version{library.versions.length !== 1 ? 's' : ''}</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {sip.versions.length > 0 ? (
+                  {library.versions.length > 0 ? (
                     <div className="space-y-4">
-                      {sip.versions.map((version) => (
-                        <div key={version.id} className="border-l-2 border-primary pl-4 py-2">
+                      {library.versions.map((v) => (
+                        <div key={v.id} className="border-l-2 border-primary pl-4 py-1">
                           <div className="flex items-center justify-between mb-1">
-                            <h4 className="font-semibold">Version {version.name}</h4>
-                            {version.releasedAt && (
+                            <h4 className="font-semibold">v{v.name}</h4>
+                            {v.releasedAt && (
                               <span className="text-xs text-muted-foreground">
-                                {new Date(version.releasedAt).toLocaleDateString()}
+                                {new Date(v.releasedAt).toLocaleDateString('en-US', {
+                                  year: 'numeric', month: 'short', day: 'numeric',
+                                })}
                               </span>
                             )}
                           </div>
-                          {version.notes && (
-                            <p className="text-sm text-muted-foreground">{version.notes}</p>
-                          )}
+                          {v.notes && <p className="text-sm text-muted-foreground">{v.notes}</p>}
                         </div>
                       ))}
                     </div>
@@ -422,48 +351,64 @@ export default function SIPDetailPage() {
           </Tabs>
         </div>
 
-        {/* Sidebar - Quick Stats */}
-        <div className="lg:col-span-1">
+        {/* Sidebar */}
+        <div className="lg:col-span-1 space-y-4">
           <Card>
-            <CardHeader>
-              <CardTitle>Quick Stats</CardTitle>
-            </CardHeader>
+            <CardHeader><CardTitle>Quick Stats</CardTitle></CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <p className="text-sm text-muted-foreground mb-1">Total Components</p>
-                <p className="text-2xl font-bold">{sip.components.length}</p>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">License</p>
+                <p className="text-lg font-bold">{isFree ? 'Free' : 'Paid'}</p>
               </div>
-
               <div>
-                <p className="text-sm text-muted-foreground mb-1">Hardware</p>
-                <p className="text-xl font-semibold">{hardwareComponents.length}</p>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Features</p>
+                <p className="text-2xl font-bold">{library.features.length}</p>
               </div>
-
               <div>
-                <p className="text-sm text-muted-foreground mb-1">Software</p>
-                <p className="text-xl font-semibold">{softwareComponents.length}</p>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Versions</p>
+                <p className="text-2xl font-bold">{library.versions.length}</p>
               </div>
-
-              <div>
-                <p className="text-sm text-muted-foreground mb-1">Versions</p>
-                <p className="text-xl font-semibold">{sip.versions.length}</p>
-              </div>
-
-              {sip.versions.length > 0 && sip.versions[0] && (
+              {library.versions[0] && (
                 <div>
-                  <p className="text-sm text-muted-foreground mb-1">Latest Version</p>
-                  <p className="text-xl font-semibold">{sip.versions[0].name}</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Latest</p>
+                  <p className="text-xl font-semibold">v{library.versions[0].name}</p>
                 </div>
               )}
-
-              {sip.dependencies.length > 0 && (
+              {library.dependencies.length > 0 && (
                 <div>
-                  <p className="text-sm text-muted-foreground mb-1">Dependencies</p>
-                  <p className="text-xl font-semibold">{sip.dependencies.length}</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Dependencies</p>
+                  <p className="text-xl font-semibold">{library.dependencies.length}</p>
                 </div>
               )}
             </CardContent>
           </Card>
+
+          {/* Links card */}
+          {(library.officialUrl || library.repositoryUrl) && (
+            <Card>
+              <CardHeader><CardTitle>Links</CardTitle></CardHeader>
+              <CardContent className="space-y-2">
+                {library.officialUrl && (
+                  <a href={library.officialUrl} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-2 text-sm text-primary hover:underline">
+                    <Globe className="h-4 w-4" /> Official Docs
+                  </a>
+                )}
+                {library.repositoryUrl && (
+                  <a href={library.repositoryUrl} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-2 text-sm text-primary hover:underline">
+                    <Github className="h-4 w-4" /> Source Code
+                  </a>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Compare link */}
+          <Link href={`/compare?slugs=${library.slug}`}
+            className="block border rounded-lg p-4 text-center text-sm font-medium hover:bg-accent transition-colors">
+            Compare with another library →
+          </Link>
         </div>
       </div>
     </div>
