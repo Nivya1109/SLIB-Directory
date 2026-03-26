@@ -9,63 +9,50 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 
-interface SIPOption {
+interface LibraryOption {
   id: string
   name: string
   slug: string
   categories: string[]
+  languages: string[]
 }
 
 interface SIPSelectorProps {
   selectedSlug: string
   onSelect: (slug: string) => void
-  excludeSlug?: string
+  excludeSlugs?: string[]
 }
 
-export function SIPSelector({ selectedSlug, onSelect, excludeSlug }: SIPSelectorProps) {
-  const [sips, setSips] = useState<SIPOption[]>([])
+export function SIPSelector({ selectedSlug, onSelect, excludeSlugs = [] }: SIPSelectorProps) {
+  const [libraries, setLibraries] = useState<LibraryOption[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const fetchSIPs = async () => {
-      try {
-        const response = await fetch('/api/sips?pageSize=100')
-        if (response.ok) {
-          const data = await response.json()
-          setSips(data.results)
-        }
-      } catch (error) {
-        console.error('Failed to fetch SIPs:', error)
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchSIPs()
+    fetch('/api/sips?pageSize=100')
+      .then((r) => r.json())
+      .then((data) => setLibraries(data.results || []))
+      .catch((e) => console.error('Failed to fetch libraries:', e))
+      .finally(() => setLoading(false))
   }, [])
 
-  const availableSIPs = sips.filter((sip) => sip.slug !== excludeSlug)
+  const available = libraries.filter((lib) => !excludeSlugs.includes(lib.slug))
 
   if (loading) {
-    return (
-      <div className="animate-pulse">
-        <div className="h-10 bg-muted rounded" />
-      </div>
-    )
+    return <div className="h-10 bg-muted rounded animate-pulse" />
   }
 
   return (
     <Select value={selectedSlug} onValueChange={onSelect}>
       <SelectTrigger>
-        <SelectValue placeholder="Select a product..." />
+        <SelectValue placeholder="Select a library..." />
       </SelectTrigger>
       <SelectContent>
-        {availableSIPs.map((sip) => (
-          <SelectItem key={sip.id} value={sip.slug}>
-            {sip.name}
-            {sip.categories.length > 0 && (
+        {available.map((lib) => (
+          <SelectItem key={lib.id} value={lib.slug}>
+            <span className="font-medium">{lib.name}</span>
+            {lib.languages.length > 0 && (
               <span className="text-xs text-muted-foreground ml-2">
-                ({sip.categories.join(', ')})
+                {lib.languages.slice(0, 2).join(', ')}
               </span>
             )}
           </SelectItem>

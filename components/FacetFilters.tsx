@@ -11,136 +11,142 @@ import {
 import { Button } from '@/components/ui/button'
 import { X } from 'lucide-react'
 
-interface Category {
+interface FilterOption {
   id: string
   name: string
-  _count?: {
-    sips: number
-  }
-}
-
-interface OperatingSystem {
-  id: string
-  name: string
-  _count?: {
-    sips: number
-  }
+  _count?: { libraries: number }
 }
 
 interface FacetFiltersProps {
-  categories: Category[]
-  oses: OperatingSystem[]
+  categories: FilterOption[]
+  platforms: FilterOption[]
+  languages: FilterOption[]
   selectedCategory: string
-  selectedOS: string
-  productType: string[]
+  selectedPlatform: string
+  selectedLanguage: string
+  licenseType: string
   onCategoryChange: (value: string) => void
-  onOSChange: (value: string) => void
-  onProductTypeChange: (types: string[]) => void
+  onPlatformChange: (value: string) => void
+  onLanguageChange: (value: string) => void
+  onLicenseTypeChange: (value: string) => void
   onClearFilters: () => void
 }
 
 export function FacetFilters({
   categories,
-  oses,
+  platforms,
+  languages,
   selectedCategory,
-  selectedOS,
-  productType,
+  selectedPlatform,
+  selectedLanguage,
+  licenseType,
   onCategoryChange,
-  onOSChange,
-  onProductTypeChange,
+  onPlatformChange,
+  onLanguageChange,
+  onLicenseTypeChange,
   onClearFilters,
 }: FacetFiltersProps) {
-  const hasFilters = selectedCategory || selectedOS || productType.length > 0
-
-  const handleProductTypeToggle = (type: string) => {
-    if (productType.includes(type)) {
-      onProductTypeChange(productType.filter(t => t !== type))
-    } else {
-      onProductTypeChange([...productType, type])
-    }
-  }
+  const hasFilters = selectedCategory || selectedPlatform || selectedLanguage || licenseType
 
   return (
     <div className="space-y-4 p-4 border rounded-lg bg-muted/50 sticky top-20">
       <div className="flex items-center justify-between">
-        <h3 className="font-semibold">Filters</h3>
+        <h3 className="font-semibold text-sm">Filters</h3>
         {hasFilters && (
-          <Button variant="ghost" size="sm" onClick={onClearFilters}>
-            <X className="h-4 w-4 mr-1" />
+          <Button variant="ghost" size="sm" onClick={onClearFilters} className="h-7 px-2">
+            <X className="h-3 w-3 mr-1" />
             Clear
           </Button>
         )}
       </div>
 
-      <div className="space-y-3">
+      <div className="space-y-4">
+        {/* Category */}
         <div>
-          <Label htmlFor="category" className="text-sm mb-2 block">
+          <Label htmlFor="category" className="text-xs font-medium text-muted-foreground mb-1.5 block uppercase tracking-wide">
             Category
           </Label>
           <Select value={selectedCategory || 'all'} onValueChange={onCategoryChange}>
-            <SelectTrigger id="category">
+            <SelectTrigger id="category" className="h-9 text-sm">
               <SelectValue placeholder="All Categories" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Categories</SelectItem>
-              {categories.map((category) => (
-                <SelectItem key={category.id} value={category.name}>
-                  {category.name} {category._count?.sips && `(${category._count.sips})`}
+              {categories.map((cat) => (
+                <SelectItem key={cat.id} value={cat.name}>
+                  {cat.name}
+                  {cat._count?.libraries ? ` (${cat._count.libraries})` : ''}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
 
+        {/* Platform / OS */}
         <div>
-          <Label htmlFor="os" className="text-sm mb-2 block">
-            Operating System
+          <Label htmlFor="platform" className="text-xs font-medium text-muted-foreground mb-1.5 block uppercase tracking-wide">
+            Platform / OS
           </Label>
-          <Select value={selectedOS || 'all'} onValueChange={onOSChange}>
-            <SelectTrigger id="os">
-              <SelectValue placeholder="All Operating Systems" />
+          <Select value={selectedPlatform || 'all'} onValueChange={onPlatformChange}>
+            <SelectTrigger id="platform" className="h-9 text-sm">
+              <SelectValue placeholder="All Platforms" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Operating Systems</SelectItem>
-              {oses.map((os) => (
-                <SelectItem key={os.id} value={os.name}>
-                  {os.name} {os._count?.sips && `(${os._count.sips})`}
+              <SelectItem value="all">All Platforms</SelectItem>
+              {platforms.map((p) => (
+                <SelectItem key={p.id} value={p.name}>
+                  {p.name}
+                  {p._count?.libraries ? ` (${p._count.libraries})` : ''}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
 
+        {/* Language */}
         <div>
-          <Label className="text-sm mb-2 block">Product Type</Label>
+          <Label htmlFor="language" className="text-xs font-medium text-muted-foreground mb-1.5 block uppercase tracking-wide">
+            Language
+          </Label>
+          <Select value={selectedLanguage || 'all'} onValueChange={onLanguageChange}>
+            <SelectTrigger id="language" className="h-9 text-sm">
+              <SelectValue placeholder="All Languages" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Languages</SelectItem>
+              {languages.map((l) => (
+                <SelectItem key={l.id} value={l.name}>
+                  {l.name}
+                  {l._count?.libraries ? ` (${l._count.libraries})` : ''}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* License type */}
+        <div>
+          <Label className="text-xs font-medium text-muted-foreground mb-1.5 block uppercase tracking-wide">
+            License
+          </Label>
           <div className="space-y-2">
-            <label className="flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={productType.includes('consumer')}
-                onChange={() => handleProductTypeToggle('consumer')}
-                className="mr-2 h-4 w-4 rounded border-gray-300"
-              />
-              <span className="text-sm">Consumer Products</span>
-            </label>
-            <label className="flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={productType.includes('opensource')}
-                onChange={() => handleProductTypeToggle('opensource')}
-                className="mr-2 h-4 w-4 rounded border-gray-300"
-              />
-              <span className="text-sm">Open Source</span>
-            </label>
-            <label className="flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={productType.includes('devboard')}
-                onChange={() => handleProductTypeToggle('devboard')}
-                className="mr-2 h-4 w-4 rounded border-gray-300"
-              />
-              <span className="text-sm">Dev Boards</span>
-            </label>
+            {[
+              { value: '', label: 'Any' },
+              { value: 'free', label: 'Free / Open Source' },
+              { value: 'paid', label: 'Paid / Commercial' },
+            ].map((opt) => (
+              <label key={opt.value} className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="licenseType"
+                  value={opt.value}
+                  checked={licenseType === opt.value}
+                  onChange={() => onLicenseTypeChange(opt.value)}
+                  className="h-4 w-4"
+                />
+                <span className="text-sm">{opt.label}</span>
+              </label>
+            ))}
           </div>
         </div>
       </div>
