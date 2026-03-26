@@ -8,92 +8,63 @@ export async function GET(
   try {
     const { slug } = params
 
-    const sip = await prisma.sIP.findUnique({
+    const library = await prisma.library.findUnique({
       where: { slug },
       include: {
-        categories: {
-          include: {
-            category: true,
-          },
-        },
-        oses: {
-          include: {
-            os: true,
-          },
-        },
-        manufacturer: true,
-        supplier: true,
-        versions: {
-          orderBy: {
-            releasedAt: 'desc',
-          },
-        },
-        components: {
-          orderBy: {
-            type: 'asc',
-          },
-        },
-        dependencies: {
-          include: {
-            dependsOn: true,
-          },
-        },
+        categories: { include: { category: true } },
+        platforms: { include: { platform: true } },
+        languages: { include: { language: true } },
+        developer: true,
+        organization: true,
+        versions: { orderBy: { releasedAt: 'desc' } },
+        features: true,
+        dependsOn: { include: { dependsOn: true } },
       },
     })
 
-    if (!sip) {
-      return NextResponse.json({ error: 'SIP not found' }, { status: 404 })
+    if (!library) {
+      return NextResponse.json({ error: 'Library not found' }, { status: 404 })
     }
 
-    // Transform the data
     const result = {
-      id: sip.id,
-      name: sip.name,
-      slug: sip.slug,
-      shortSummary: sip.shortSummary,
-      description: sip.description,
-      costMinUSD: sip.costMinUSD,
-      costMaxUSD: sip.costMaxUSD,
-      scrapedAt: sip.scrapedAt,
-      dataSource: sip.dataSource,
-      createdAt: sip.createdAt,
-      updatedAt: sip.updatedAt,
-      manufacturer: sip.manufacturer
-        ? {
-            id: sip.manufacturer.id,
-            name: sip.manufacturer.name,
-            url: sip.manufacturer.url,
-          }
+      id: library.id,
+      name: library.name,
+      slug: library.slug,
+      shortSummary: library.shortSummary,
+      description: library.description,
+      functionDesc: library.functionDesc,
+      socialImpact: library.socialImpact,
+      exampleCode: library.exampleCode,
+      officialUrl: library.officialUrl,
+      repositoryUrl: library.repositoryUrl,
+      costMinUSD: library.costMinUSD,
+      costMaxUSD: library.costMaxUSD,
+      scrapedAt: library.scrapedAt,
+      dataSource: library.dataSource,
+      createdAt: library.createdAt,
+      updatedAt: library.updatedAt,
+      developer: library.developer
+        ? { id: library.developer.id, name: library.developer.name, url: library.developer.url }
         : null,
-      supplier: sip.supplier
-        ? {
-            id: sip.supplier.id,
-            name: sip.supplier.name,
-            url: sip.supplier.url,
-          }
+      organization: library.organization
+        ? { id: library.organization.id, name: library.organization.name, url: library.organization.url }
         : null,
-      categories: sip.categories.map((c) => ({
-        id: c.category.id,
-        name: c.category.name,
-      })),
-      oses: sip.oses.map((o) => ({
-        id: o.os.id,
-        name: o.os.name,
-      })),
-      versions: sip.versions.map((v) => ({
+      categories: library.categories.map((c) => ({ id: c.category.id, name: c.category.name })),
+      platforms: library.platforms.map((p) => ({ id: p.platform.id, name: p.platform.name })),
+      languages: library.languages.map((l) => ({ id: l.language.id, name: l.language.name })),
+      versions: library.versions.map((v) => ({
         id: v.id,
         name: v.name,
         releasedAt: v.releasedAt,
         notes: v.notes,
       })),
-      components: sip.components.map((c) => ({
-        id: c.id,
-        type: c.type,
-        name: c.name,
-        spec: c.spec,
-        required: c.required,
+      features: library.features.map((f) => ({
+        id: f.id,
+        name: f.name,
+        spec: f.spec,
+        required: f.required,
       })),
-      dependencies: sip.dependencies.map((d) => ({
+      dependencies: library.dependsOn.map((d) => ({
         id: d.id,
         name: d.dependsOn.name,
         slug: d.dependsOn.slug,
@@ -102,7 +73,7 @@ export async function GET(
 
     return NextResponse.json(result)
   } catch (error) {
-    console.error('Error fetching SIP:', error)
-    return NextResponse.json({ error: 'Failed to fetch SIP' }, { status: 500 })
+    console.error('Error fetching library:', error)
+    return NextResponse.json({ error: 'Failed to fetch library' }, { status: 500 })
   }
 }

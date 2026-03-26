@@ -3,14 +3,14 @@ import { prisma } from '@/lib/prisma'
 
 export async function GET() {
   try {
-    const categories = await prisma.category.findMany({
+    const languages = await prisma.language.findMany({
       where: { libraries: { some: {} } },
       include: { _count: { select: { libraries: true } } },
       orderBy: { name: 'asc' },
     })
-    return NextResponse.json(categories)
+    return NextResponse.json(languages)
   } catch (error) {
-    console.error('Error fetching categories:', error)
-    return NextResponse.json({ error: 'Failed to fetch categories' }, { status: 500 })
+    console.error('Error fetching languages:', error)
+    return NextResponse.json({ error: 'Failed to fetch languages' }, { status: 500 })
   }
 }

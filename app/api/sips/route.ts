@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { searchSIPs } from '@/lib/searchService'
+import { searchLibraries } from '@/lib/searchService'
 
 export const dynamic = 'force-dynamic'
 
@@ -8,18 +8,18 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams
     const query = searchParams.get('q') || ''
     const category = searchParams.get('category') || ''
-    const os = searchParams.get('os') || ''
-    const productTypeParam = searchParams.get('productType') || ''
-    const productType = productTypeParam ? productTypeParam.split(',') : []
+    const platform = searchParams.get('platform') || ''
+    const language = searchParams.get('language') || ''
+    const licenseType = searchParams.get('licenseType') || ''
     const page = parseInt(searchParams.get('page') || '1')
     const pageSize = parseInt(searchParams.get('pageSize') || '20')
 
-    // Use the unified search service (Meilisearch with Postgres fallback)
-    const searchResults = await searchSIPs({
+    const searchResults = await searchLibraries({
       query,
       category,
-      os,
-      productType,
+      platform,
+      language,
+      licenseType,
       page,
       pageSize,
     })
@@ -27,6 +27,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(searchResults)
   } catch (error) {
     console.error('Search error:', error)
-    return NextResponse.json({ error: 'Failed to search SIPs' }, { status: 500 })
+    return NextResponse.json({ error: 'Failed to search libraries' }, { status: 500 })
   }
 }
