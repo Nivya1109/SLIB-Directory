@@ -16,6 +16,7 @@ import {
   Globe,
   Code2,
 } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
 
 interface Library {
   id: string
@@ -185,7 +186,9 @@ export default function LibraryDetailPage() {
                 <Card>
                   <CardHeader><CardTitle>Description</CardTitle></CardHeader>
                   <CardContent>
-                    <p className="text-sm leading-relaxed">{library.description}</p>
+                    <div className="text-sm leading-relaxed prose prose-sm max-w-none">
+                      <ReactMarkdown>{library.description}</ReactMarkdown>
+                    </div>
                   </CardContent>
                 </Card>
               )}
