@@ -2,16 +2,21 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BookOpen, Search, Menu, X, BarChart2, GitCompare, Layers, ShieldCheck } from 'lucide-react'
+import { BookOpen, Search, Menu, X, BarChart2, GitCompare, Layers } from 'lucide-react'
 import { SearchBar } from './SearchBar'
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
+import dynamic from 'next/dynamic'
+
+const NavbarAdminSection = dynamic(
+  () => import('./NavbarAdminSection').then((m) => m.NavbarAdminSection),
+  { ssr: false }
+)
 
 const navLinks = [
   { href: '/search', label: 'Browse', icon: Layers },
   { href: '/compare', label: 'Compare', icon: GitCompare },
   { href: '/stats', label: 'Statistics', icon: BarChart2 },
-  { href: '/admin', label: 'Admin', icon: ShieldCheck },
 ]
 
 export function Navbar() {
@@ -56,6 +61,8 @@ export function Navbar() {
 
           {/* Right side */}
           <div className="flex items-center gap-2">
+            {/* Admin access — subtle, right-aligned, client-only */}
+            <NavbarAdminSection />
             <button
               onClick={() => {
                 if (pathname === '/search') {
