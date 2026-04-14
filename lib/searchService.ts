@@ -390,10 +390,13 @@ async function searchWithTypesense(params: SearchParams): Promise<SearchResponse
     : '*'
   const isWildcard = !tsQuery || tsQuery === '*'
 
+  const intentDetected = detectIntent(query)
+
   // Debug logs — shows what query is actually sent to Typesense
   console.log('[Search] Original Query  :', query)
   console.log('[Search] Use-case terms  :', useCaseTerms)
   console.log('[Search] Final TS query  :', tsQuery)
+  console.log('[Search] Detected intent :', intentDetected ?? 'none')
 
   const filters: string[] = []
   if (category)    filters.push(`categories:=[${category}]`)
@@ -401,6 +404,12 @@ async function searchWithTypesense(params: SearchParams): Promise<SearchResponse
   if (language)    filters.push(`languages:=[${language}]`)
   if (licenseType === 'free') filters.push('costMinUSD:=0')
   if (licenseType === 'paid') filters.push('costMinUSD:>0')
+
+  // KEY: when intent is detected, fetch a larger pool so re-ranking has enough
+  // candidates to promote intent-matching libraries above name-match-only results.
+  // Typesense paginates server-side — if we only fetch `pageSize` results and
+  // testing libraries happen to be ranked #21+ by BM25, re-ranking never sees them.
+  const fetchSize = intentDetected ? Math.min(pageSize * 3, 60) : pageSize
 
   const tsParams = {
     q: tsQuery,
@@ -427,8 +436,10 @@ async function searchWithTypesense(params: SearchParams): Promise<SearchResponse
 
     sort_by: isWildcard ? 'name:asc' : '_text_match:desc,name:asc',
 
-    page,
-    per_page: pageSize,
+    // Always start from page 1 when intent-fetching a larger pool;
+    // we handle pagination ourselves via slice() below.
+    page: intentDetected ? 1 : page,
+    per_page: fetchSize,
 
     // Return highlighted snippets for UI
     highlight_full_fields: 'name',
@@ -455,9 +466,23 @@ async function searchWithTypesense(params: SearchParams): Promise<SearchResponse
     languages: hit.document.languages || [],
   }))
 
-  // Re-rank so intent-matching libraries (e.g. testing libs for "react testing")
-  // surface above libraries that only matched the non-intent word (e.g. "React").
-  const results = reRankByIntent(rawResults, query)
+  // Re-rank so intent-matching libraries surface above libraries that only
+  // matched the non-intent word (e.g. "React" in "react testing").
+  // Then slice the re-ranked pool down to the requested page window.
+  const reRanked = reRankByIntent(rawResults, query)
+
+  // Debug: show top-5 results after re-ranking with their intent bonus
+  if (intentDetected) {
+    console.log('[Search] Top results after re-rank:')
+    reRanked.slice(0, 5).forEach((r, i) => {
+      console.log(`  ${i + 1}. ${r.name} | cats: [${r.categories.join(', ')}] | bonus: ${intentBonus(r, intentDetected)}`)
+    })
+  }
+
+  const start = intentDetected ? (page - 1) * pageSize : 0
+  const results = intentDetected
+    ? reRanked.slice(start, start + pageSize)
+    : reRanked
 
   return {
     results,
