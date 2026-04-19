@@ -7,12 +7,14 @@ import { crawlPyPI } from '@/etl/crawlers/pypi'
 import { crawlApache } from '@/etl/crawlers/apache'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 300
 
 // New libraries to discover per source per run (total ≤ ~6)
 const PER_SOURCE_NEW = 2
 // Existing records with no exampleCode to backfill per run
-const BACKFILL_LIMIT = 15
+// Kept low: each backfill is 1–2 s of network I/O; Render proxy timeout is ~30 s
+const BACKFILL_LIMIT = 4
+// Hard wall: always respond before Render's proxy kills the connection at ~30 s
+const ROUTE_TIMEOUT_MS = 25_000
 
 // Extracts the first real code block from markdown — same logic as the crawlers.
 function extractCode(text: string | undefined): string | null {
@@ -82,58 +84,72 @@ export async function POST(_request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    console.log('[crawler] POST received — starting crawl run')
+
     // Snapshot counts BEFORE so we can compute deltas after
     const before      = await countBySource()
     const totalBefore = await prisma.library.count()
 
-    console.log(`[crawler] starting — DB before: ${totalBefore}`, before)
+    console.log(`[crawler] DB before: ${totalBefore}`, before)
 
-    // Each run: skip curated lists (all likely in DB already), use discovery to
-    // find genuinely new libraries. PER_SOURCE_NEW caps new inserts per source.
     type SourceResult = { success: number; failed: number }
     let npmResult:    SourceResult = { success: 0, failed: 0 }
     let pypiResult:   SourceResult = { success: 0, failed: 0 }
     let apacheResult: SourceResult = { success: 0, failed: 0 }
     const sourceErrors: Record<string, string> = {}
-
-    console.log('[crawler] starting npm (discovery, new only)...')
-    try {
-      npmResult = await crawlNpm({ limit: 0, skipDiscovery: false, discoveryLimit: PER_SOURCE_NEW })
-      console.log(`[crawler] npm done: ${npmResult.success} ok, ${npmResult.failed} failed`)
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      sourceErrors.npm = msg
-      console.error('[crawler] npm error:', msg)
-    }
-
-    console.log('[crawler] starting pypi (discovery, new only)...')
-    try {
-      pypiResult = await crawlPyPI({ limit: 0, skipDiscovery: false, discoveryLimit: PER_SOURCE_NEW })
-      console.log(`[crawler] pypi done: ${pypiResult.success} ok, ${pypiResult.failed} failed`)
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      sourceErrors.pypi = msg
-      console.error('[crawler] pypi error:', msg)
-    }
-
-    console.log('[crawler] starting apache (new only)...')
-    try {
-      apacheResult = await crawlApache({ limit: PER_SOURCE_NEW, newOnly: true })
-      console.log(`[crawler] apache done: ${apacheResult.success} ok, ${apacheResult.failed} failed`)
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      sourceErrors.apache = msg
-      console.error('[crawler] apache error:', msg)
-    }
-
-    // Backfill real example code for existing records that have none
-    console.log('[crawler] backfilling example code...')
     let backfilled = 0
-    try {
-      backfilled = await backfillExampleCode()
-      console.log(`[crawler] backfilled ${backfilled} example codes`)
-    } catch (err) {
-      console.warn('[crawler] backfill error:', err instanceof Error ? err.message : err)
+    let timedOut = false
+
+    // Race all crawler work against the hard wall timeout.
+    // Render's proxy kills the connection at ~30 s; we must respond before that.
+    const crawlWork = async () => {
+      console.log('[crawler] starting npm (discovery, new only)...')
+      try {
+        npmResult = await crawlNpm({ limit: 0, skipDiscovery: false, discoveryLimit: PER_SOURCE_NEW })
+        console.log(`[crawler] npm done: ${npmResult.success} ok, ${npmResult.failed} failed`)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        sourceErrors.npm = msg
+        console.error('[crawler] npm error:', msg)
+      }
+
+      console.log('[crawler] starting pypi (discovery, new only)...')
+      try {
+        pypiResult = await crawlPyPI({ limit: 0, skipDiscovery: false, discoveryLimit: PER_SOURCE_NEW })
+        console.log(`[crawler] pypi done: ${pypiResult.success} ok, ${pypiResult.failed} failed`)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        sourceErrors.pypi = msg
+        console.error('[crawler] pypi error:', msg)
+      }
+
+      console.log('[crawler] starting apache (new only)...')
+      try {
+        apacheResult = await crawlApache({ limit: PER_SOURCE_NEW, newOnly: true })
+        console.log(`[crawler] apache done: ${apacheResult.success} ok, ${apacheResult.failed} failed`)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        sourceErrors.apache = msg
+        console.error('[crawler] apache error:', msg)
+      }
+
+      console.log('[crawler] backfilling example code...')
+      try {
+        backfilled = await backfillExampleCode()
+        console.log(`[crawler] backfilled ${backfilled} example codes`)
+      } catch (err) {
+        console.warn('[crawler] backfill error:', err instanceof Error ? err.message : err)
+      }
+    }
+
+    const timeoutFence = new Promise<void>((resolve) =>
+      setTimeout(() => { timedOut = true; resolve() }, ROUTE_TIMEOUT_MS)
+    )
+
+    await Promise.race([crawlWork(), timeoutFence])
+
+    if (timedOut) {
+      console.warn(`[crawler] hit ${ROUTE_TIMEOUT_MS}ms wall — returning partial result`)
     }
 
     // Snapshot counts AFTER — deltas are the ground truth
@@ -141,14 +157,11 @@ export async function POST(_request: NextRequest) {
     const totalAfter = await prisma.library.count()
     const delta      = (key: string) => (after[key] ?? 0) - (before[key] ?? 0)
 
-    console.log(`[crawler] final summary — DB after: ${totalAfter} (+${totalAfter - totalBefore}), backfilled=${backfilled}`, {
-      npm: { ...npmResult, delta: delta('npm-crawler'), error: sourceErrors.npm },
-      pypi: { ...pypiResult, delta: delta('pypi-crawler'), error: sourceErrors.pypi },
-      apache: { ...apacheResult, delta: delta('apache-crawler'), error: sourceErrors.apache },
-    })
+    console.log(`[crawler] done — DB after: ${totalAfter} (+${totalAfter - totalBefore}), backfilled=${backfilled}, timedOut=${timedOut}`)
 
     return NextResponse.json({
       success: true,
+      timedOut,
       crawl: {
         before:     totalBefore,
         after:      totalAfter,

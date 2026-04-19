@@ -275,17 +275,22 @@ export default function AdminPage() {
   async function runCrawler() {
     setCrawling(true)
     setCrawlerResult(null)
+    const controller = new AbortController()
+    const clientTimeout = setTimeout(() => controller.abort(), 55_000)
     try {
       const res = await fetch('/api/admin/crawler/run', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ action: 'crawl' }),
+        signal:  controller.signal,
       })
       const data = await res.json()
       setCrawlerResult(data)
-    } catch {
-      setCrawlerResult({ error: 'Network error — check server logs' })
+    } catch (err) {
+      const isTimeout = err instanceof Error && err.name === 'AbortError'
+      setCrawlerResult({ error: isTimeout ? 'Request timed out — check server logs for partial progress' : 'Network error — check server logs' })
     } finally {
+      clearTimeout(clientTimeout)
       setCrawling(false)
     }
   }
