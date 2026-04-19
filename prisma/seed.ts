@@ -1456,28 +1456,21 @@ console.log('Logged in as', session.user?.email)`,
   // Inter-library dependencies
   // -------------------------------------------------------------------------
   console.log('Creating dependencies...')
-  await Promise.all([
-    // pandas depends on numpy
-    prisma.libraryDep.create({
-      data: { libraryId: libPandas.id, dependsOnId: libNumPy.id },
-    }),
-    // Passport.js is often used with Express
-    prisma.libraryDep.create({
-      data: { libraryId: libPassport.id, dependsOnId: libExpress.id },
-    }),
-    // Winston used with Express (logging middleware)
-    prisma.libraryDep.create({
-      data: { libraryId: libWinston.id, dependsOnId: libExpress.id },
-    }),
-    // Mongoose used with Express
-    prisma.libraryDep.create({
-      data: { libraryId: libMongoose.id, dependsOnId: libExpress.id },
-    }),
-    // bcrypt typically used alongside Passport.js
-    prisma.libraryDep.create({
-      data: { libraryId: libBcrypt.id, dependsOnId: libPassport.id },
-    }),
-  ])
+  await prisma.libraryDep.createMany({
+    skipDuplicates: true,
+    data: [
+      // pandas depends on numpy
+      { libraryId: libPandas.id, dependsOnId: libNumPy.id },
+      // Passport.js is often used with Express
+      { libraryId: libPassport.id, dependsOnId: libExpress.id },
+      // Winston used with Express (logging middleware)
+      { libraryId: libWinston.id, dependsOnId: libExpress.id },
+      // Mongoose used with Express
+      { libraryId: libMongoose.id, dependsOnId: libExpress.id },
+      // bcrypt typically used alongside Passport.js
+      { libraryId: libBcrypt.id, dependsOnId: libPassport.id },
+    ],
+  })
 
   console.log('✅ Database seeded successfully!')
   console.log('\nCreated:')
