@@ -1374,6 +1374,77 @@ def db_connection():
     },
   })
 
+  // 21. NextAuth.js
+  const libNextAuth = await prisma.library.create({
+    data: {
+      name: 'next-auth',
+      slug: 'next-auth',
+      shortSummary: 'Authentication for Next.js applications',
+      description:
+        'NextAuth.js is a complete open-source authentication solution for Next.js applications. It supports OAuth providers (GitHub, Google, Twitter), email/password credentials, magic links, and more — with built-in session management.',
+      functionDesc: 'Adding authentication (OAuth, credentials, magic links) to Next.js apps',
+      socialImpact:
+        'Became the standard authentication library for Next.js, dramatically lowering the barrier to adding secure auth to React apps.',
+      exampleCode: `// app/api/auth/[...nextauth]/route.ts
+import NextAuth from 'next-auth'
+import GitHub from 'next-auth/providers/github'
+
+const handler = NextAuth({
+  providers: [
+    GitHub({
+      clientId: process.env.GITHUB_ID!,
+      clientSecret: process.env.GITHUB_SECRET!,
+    }),
+  ],
+  callbacks: {
+    async session({ session, token }) {
+      return session
+    },
+  },
+})
+
+export { handler as GET, handler as POST }
+
+// In a server component:
+import { getServerSession } from 'next-auth'
+const session = await getServerSession()
+if (!session) redirect('/login')
+console.log('Logged in as', session.user?.email)`,
+      officialUrl: 'https://next-auth.js.org',
+      repositoryUrl: 'https://github.com/nextauthjs/next-auth',
+      costMinUSD: 0,
+      costMaxUSD: 0,
+      dataSource: 'curated',
+      tags: ['auth', 'oauth', 'next.js', 'jwt', 'session', 'authentication'],
+      categories: { create: [{ categoryId: catAuth.id }] },
+      platforms: {
+        create: [
+          { platformId: platMacOS.id },
+          { platformId: platWindows.id },
+          { platformId: platLinux.id },
+          { platformId: platWeb.id },
+        ],
+      },
+      languages: { create: [{ languageId: langJS.id }, { languageId: langTS.id }] },
+      versions: {
+        create: [
+          { name: '4.24.7', releasedAt: new Date('2024-03-01'), notes: 'Bug fixes and security patches' },
+          { name: '4.24.0', releasedAt: new Date('2023-10-18'), notes: 'Next.js 14 App Router support' },
+          { name: '4.23.0', releasedAt: new Date('2023-07-01'), notes: 'New provider updates' },
+        ],
+      },
+      features: {
+        create: [
+          { name: 'OAuth providers', spec: 'GitHub, Google, Twitter, Discord, and 50+ more', required: true },
+          { name: 'Credentials auth', spec: 'Username/password with custom validation', required: false },
+          { name: 'JWT sessions', spec: 'Stateless sessions with signed JWTs', required: true },
+          { name: 'Database sessions', spec: 'Persist sessions to any Prisma-compatible DB', required: false },
+          { name: 'Magic links', spec: 'Passwordless email sign-in', required: false },
+        ],
+      },
+    },
+  })
+
   // -------------------------------------------------------------------------
   // Inter-library dependencies
   // -------------------------------------------------------------------------
@@ -1407,7 +1478,7 @@ def db_connection():
   console.log('- 7 Platforms (macOS, Windows, Linux, Web, Android, iOS, Cross-platform)')
   console.log('- 10 Languages')
   console.log('- 3 Developers, 10 Organizations')
-  console.log('- 20 Libraries with versions, features, and dependencies')
+  console.log('- 21 Libraries with versions, features, and dependencies')
 }
 
 main()

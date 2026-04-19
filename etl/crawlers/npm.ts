@@ -213,6 +213,67 @@ async function upsertLibrary(pkgData: NpmPackageData, category: string) {
   })
 }
 
+// Search terms used for discovery — broad enough to surface many unique packages
+const DISCOVERY_TERMS = [
+  'react component', 'nodejs utility', 'typescript helper', 'cli tool',
+  'data validation', 'animation library', 'chart visualization', 'markdown parser',
+  'state management', 'api client', 'graphql client', 'build bundler',
+  'image processing', 'email sender', 'date time', 'file upload',
+  'payment gateway', 'oauth login', 'caching layer', 'websocket client',
+]
+
+function inferCategoryFromKeywords(keywords: string[], searchTerm: string): string {
+  const all = [...keywords, searchTerm].join(' ').toLowerCase()
+  if (all.match(/react|vue|angular|svelte|ui|component/)) return 'UI Frameworks'
+  if (all.match(/test|mock|assert|spec/))                  return 'Testing'
+  if (all.match(/database|orm|sql|mongo|redis/))           return 'Database & ORM'
+  if (all.match(/auth|oauth|jwt|crypto|security/))         return 'Authentication & Security'
+  if (all.match(/log|monitor|trace|sentry/))               return 'Logging & Monitoring'
+  if (all.match(/message|queue|kafka|event|pubsub/))       return 'Messaging & Events'
+  if (all.match(/devops|deploy|docker|ci|infra/))          return 'DevOps & Infrastructure'
+  if (all.match(/http|api|rest|fetch|request|axios/))      return 'HTTP & Networking'
+  if (all.match(/data|ml|chart|graph|csv|analytics/))      return 'Data Science & ML'
+  return 'Utilities'
+}
+
+async function discoverNewNpmPackages(knownNames: Set<string>, limit: number): Promise<number> {
+  console.log(`\n🔍 NPM Discovery — searching for up to ${limit} new packages...\n`)
+  let newCount = 0
+
+  for (const term of DISCOVERY_TERMS) {
+    if (newCount >= limit) break
+    try {
+      const res = await fetch(
+        `https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(term)}&size=50`
+      )
+      if (!res.ok) continue
+      const json = await res.json() as { objects?: Array<{ package: { name: string; keywords?: string[] } }> }
+      const objects = json.objects ?? []
+
+      for (const obj of objects) {
+        if (newCount >= limit) break
+        const pkgName = obj.package?.name
+        if (!pkgName || knownNames.has(pkgName)) continue
+
+        const data = await fetchNpmPackage(pkgName)
+        if (data) {
+          const category = inferCategoryFromKeywords(obj.package.keywords ?? [], term)
+          await upsertLibrary(data, category)
+          knownNames.add(pkgName)
+          newCount++
+          console.log(`  🆕  ${pkgName} (${category}) — via "${term}"`)
+        }
+        await new Promise((r) => setTimeout(r, 150))
+      }
+    } catch (err) {
+      console.warn(`  ⚠️  Discovery search "${term}" failed:`, err)
+    }
+  }
+
+  console.log(`\n  Discovery found ${newCount} new npm packages\n`)
+  return newCount
+}
+
 export async function crawlNpm() {
   console.log(`\n📦 NPM Crawler — fetching ${NPM_PACKAGES.length} packages...\n`)
   let success = 0
@@ -236,6 +297,12 @@ export async function crawlNpm() {
     // Rate limit: 150ms between requests
     await new Promise((r) => setTimeout(r, 150))
   }
+
+  // Discovery phase — find packages not already in DB
+  const allNames = await prisma.library.findMany({ select: { name: true } })
+  const knownNames = new Set(allNames.map((l) => l.name))
+  const discovered = await discoverNewNpmPackages(knownNames, 60)
+  success += discovered
 
   console.log(`\nNPM done: ${success} succeeded, ${failed} failed\n`)
   return { success, failed }

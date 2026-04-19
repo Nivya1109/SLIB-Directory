@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import {
   BookOpen, Code2, Globe, LogOut,
   AlertCircle, Link2, Database, ExternalLink, MessageSquare,
+  RefreshCw,
 } from 'lucide-react'
 
 interface AdminStats {
@@ -26,6 +27,8 @@ interface SupportTicket {
   category: string
   message: string
   status: string
+  adminReply: string | null
+  repliedAt: string | null
   createdAt: string
 }
 
@@ -60,12 +63,19 @@ const STATUS_COLORS: Record<string, string> = {
 function TicketRow({
   ticket,
   onStatusChange,
+  onReplied,
 }: {
   ticket: SupportTicket
   onStatusChange: (id: string, status: string) => void
+  onReplied: (id: string, reply: string, repliedAt: string) => void
 }) {
-  const [expanded, setExpanded]   = useState(false)
-  const [updating, setUpdating]   = useState(false)
+  const [expanded, setExpanded]     = useState(false)
+  const [updating, setUpdating]     = useState(false)
+  const [showReply, setShowReply]   = useState(false)
+  const [replyText, setReplyText]   = useState('')
+  const [sending, setSending]       = useState(false)
+  const [replyError, setReplyError] = useState('')
+  const [sent, setSent]             = useState(false)
 
   async function cycleStatus() {
     const next = ticket.status === 'open' ? 'in_progress'
@@ -81,6 +91,40 @@ function TicketRow({
       if (res.ok) onStatusChange(ticket.id, next)
     } finally {
       setUpdating(false)
+    }
+  }
+
+  async function submitReply() {
+    if (!replyText.trim()) return
+    setSending(true)
+    setReplyError('')
+    try {
+      const res = await fetch(`/api/support/${ticket.id}`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ adminReply: replyText }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        onReplied(ticket.id, replyText.trim(), data.ticket?.repliedAt ?? new Date().toISOString())
+        onStatusChange(ticket.id, 'resolved')
+        setShowReply(false)
+        setReplyText('')
+        setSent(true)
+        // Collapse after 2 seconds so "Sent ✓" is visible briefly then disappears
+        setTimeout(() => {
+          setSent(false)
+          setExpanded(false)
+        }, 2000)
+      } else {
+        console.error('Reply failed:', res.status, data)
+        setReplyError(data?.error ?? `Error ${res.status}`)
+      }
+    } catch (err) {
+      console.error('Reply network error:', err)
+      setReplyError('Network error — please try again')
+    } finally {
+      setSending(false)
     }
   }
 
@@ -114,10 +158,60 @@ function TicketRow({
           )}
         </div>
       </div>
+
       {expanded && (
-        <p className="text-sm text-muted-foreground whitespace-pre-wrap bg-muted/40 rounded p-3 mt-1">
-          {ticket.message}
-        </p>
+        <div className="mt-1 space-y-2">
+          {/* User message */}
+          <p className="text-sm text-muted-foreground whitespace-pre-wrap bg-muted/40 rounded p-3">
+            {ticket.message}
+          </p>
+
+          {/* Sent flash — visible for 2s after submit, gone on reload */}
+          {sent ? (
+            <p className="text-xs text-emerald-600 font-medium">Sent ✓</p>
+          ) : ticket.adminReply ? (
+            /* Already replied — no form, no persistent box */
+            null
+          ) : (
+            /* Reply form */
+            showReply ? (
+              <div className="space-y-2">
+                <textarea
+                  value={replyText}
+                  onChange={(e) => { setReplyText(e.target.value); setReplyError('') }}
+                  placeholder="Type your reply…"
+                  rows={3}
+                  className="w-full text-sm border rounded p-2 resize-none focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                {replyError && (
+                  <p className="text-xs text-red-500">{replyError}</p>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    onClick={submitReply}
+                    disabled={sending || !replyText.trim()}
+                    className="text-xs px-3 py-1 rounded bg-primary text-primary-foreground font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
+                  >
+                    {sending ? 'Sending…' : 'Send Reply'}
+                  </button>
+                  <button
+                    onClick={() => { setShowReply(false); setReplyText(''); setReplyError('') }}
+                    className="text-xs px-3 py-1 rounded border text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowReply(true)}
+                className="text-xs px-3 py-1 rounded border border-primary text-primary font-medium hover:bg-primary hover:text-primary-foreground transition-colors"
+              >
+                Reply
+              </button>
+            )
+          )}
+        </div>
       )}
     </div>
   )
@@ -131,6 +225,14 @@ export default function AdminPage() {
   const [tickets, setTickets] = useState<SupportTicket[]>([])
   const [ticketFilter, setTicketFilter] = useState<string>('all')
   const [loading, setLoading] = useState(true)
+
+  // Crawler tool state
+  const [crawling, setCrawling] = useState(false)
+  type CrawlerResult = {
+    crawl?: { before: number; after: number; inserted: number; sources: { npm: number; pypi: number; apache: number }; totalInDb: number }
+    error?: string
+  }
+  const [crawlerResult, setCrawlerResult] = useState<CrawlerResult | null>(null)
 
   useEffect(() => {
     if (status === 'unauthenticated') {
@@ -161,6 +263,24 @@ export default function AdminPage() {
     }
     load()
   }, [])
+
+  async function runCrawler() {
+    setCrawling(true)
+    setCrawlerResult(null)
+    try {
+      const res = await fetch('/api/admin/crawler/run', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ action: 'crawl' }),
+      })
+      const data = await res.json()
+      setCrawlerResult(data)
+    } catch {
+      setCrawlerResult({ error: 'Network error — check server logs' })
+    } finally {
+      setCrawling(false)
+    }
+  }
 
   if (status === 'loading' || loading) {
     return (
@@ -319,9 +439,18 @@ export default function AdminPage() {
                 {tickets
                   .filter((t) => ticketFilter === 'all' || t.status === ticketFilter)
                   .map((ticket) => (
-                    <TicketRow key={ticket.id} ticket={ticket} onStatusChange={(id, status) => {
-                      setTickets((prev) => prev.map((t) => t.id === id ? { ...t, status } : t))
-                    }} />
+                    <TicketRow
+                      key={ticket.id}
+                      ticket={ticket}
+                      onStatusChange={(id, status) => {
+                        setTickets((prev) => prev.map((t) => t.id === id ? { ...t, status } : t))
+                      }}
+                      onReplied={(id, reply, repliedAt) => {
+                        setTickets((prev) => prev.map((t) =>
+                          t.id === id ? { ...t, adminReply: reply, repliedAt, status: 'resolved' } : t
+                        ))
+                      }}
+                    />
                   ))}
               </div>
             )}
@@ -476,6 +605,71 @@ export default function AdminPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ── Crawler Tools ── */}
+      {(
+          <div>
+            <h2 className="text-lg font-semibold mb-4 text-muted-foreground uppercase tracking-wide text-sm">
+              Crawler Tools
+            </h2>
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <RefreshCw className="h-5 w-5 text-primary" /> Data Management
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    onClick={runCrawler}
+                    disabled={crawling}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
+                  >
+                    <RefreshCw className={`h-4 w-4 ${crawling ? 'animate-spin' : ''}`} />
+                    {crawling ? 'Updating…' : 'Update Library Data'}
+                  </button>
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  Fetches the libraries from npm, PyPI, and Apache and saves new records to the database.
+                  May take 1 to 2 minutes.
+                </p>
+
+                {/* Crawler result display */}
+                {crawlerResult && (
+                  <div className={`rounded-md p-4 text-sm space-y-1 border ${
+                    crawlerResult.error
+                      ? 'bg-red-50 border-red-200 text-red-800'
+                      : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                  }`}>
+                    {crawlerResult.error ? (
+                      <p className="font-medium">Error: {crawlerResult.error}</p>
+                    ) : (
+                      <>
+                        {crawlerResult.crawl && (
+                          <>
+                            <p className="font-semibold">Crawler completed</p>
+                            <p>{crawlerResult.crawl.inserted > 0
+                              ? `${crawlerResult.crawl.inserted} new libraries added`
+                              : 'No new libraries — all records already up to date'}
+                            </p>
+                            <p className="text-xs opacity-75">
+                              npm +{crawlerResult.crawl.sources.npm} · PyPI +{crawlerResult.crawl.sources.pypi} · Apache +{crawlerResult.crawl.sources.apache}
+                            </p>
+                            <p className="font-medium mt-1">
+                              Total in database: {crawlerResult.crawl.totalInDb} libraries
+                              {crawlerResult.crawl.inserted === 0 && ` (was ${crawlerResult.crawl.before})`}
+                            </p>
+                          </>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+      )}
     </div>
   )
 }
