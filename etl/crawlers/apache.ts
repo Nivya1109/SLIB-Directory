@@ -47,7 +47,9 @@ function detectCategory(project: ApacheProject): string {
 
 function detectLanguages(project: ApacheProject): string[] {
   const lang = project['programming-language']
-  if (!lang) return ['Java'] // most Apache projects are Java
+  // Default to Java — the vast majority of Apache projects are JVM-based,
+  // and missing language data is more common than a genuinely non-Java project.
+  if (!lang) return ['Java']
 
   const langs = Array.isArray(lang) ? lang : [lang]
   const mapped: string[] = []
@@ -84,7 +86,8 @@ async function crawlApache(options: CrawlApacheOptions = {}) {
 
   console.log(`Found ${projects.length} Apache projects. Processing library-relevant ones...\n`)
 
-  // Filter: must have a name and description; skip incubating/attic
+  // Skip incubating, attic, and retired projects — they are incomplete or no longer
+  // maintained, which would introduce low-quality entries into the search index.
   const SKIP_KEYWORDS = ['incubat', 'attic', 'retired', 'old', 'legacy']
   let relevant = projects.filter((p) => {
     if (!p.name || !p.description) return false
@@ -117,6 +120,8 @@ async function crawlApache(options: CrawlApacheOptions = {}) {
 
   for (const project of relevant) {
     try {
+      // Prefix with "Apache " for consistency — the source JSON uses both "Apache Kafka"
+      // and bare "Kafka", so normalizing prevents duplicate slugs across re-runs.
       const name = project.name.startsWith('Apache ') ? project.name : `Apache ${project.name}`
       const slug = slugify(name)
       const description = project.description || project.shortdesc || ''

@@ -23,6 +23,9 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
     libraries = body.libraries
+    // 2 is the minimum for a meaningful comparison; 4 is the cap because more
+    // libraries produce a prompt that exceeds the model's useful token budget
+    // and causes the response to become shallow and repetitive.
     if (!Array.isArray(libraries) || libraries.length < 2 || libraries.length > 4) {
       return NextResponse.json({ error: 'Provide 2–4 libraries' }, { status: 400 })
     }

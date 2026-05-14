@@ -1,6 +1,3 @@
-// Software Library Directory — Prisma Schema
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -11,53 +8,40 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-// ---------------------------------------------------------------------------
-// Core: Library
-// ---------------------------------------------------------------------------
-
 model Library {
-  id             String   @id @default(cuid())
-  name           String   @unique
-  slug           String   @unique
-  shortSummary   String?  // one-liner shown on search cards
-  description    String?  // full description
-  functionDesc   String?  // what problem it solves / use-case summary
-  socialImpact   String?  // community impact, adoption notes
-  exampleCode    String?  @db.Text // code snippet showing usage
-  officialUrl    String?  // docs / homepage URL
-  repositoryUrl  String?  // GitHub / GitLab URL
-  costMinUSD     Int?     // 0 = free; stored in cents for precision
+  id             String             @id @default(cuid())
+  name           String             @unique
+  slug           String             @unique
+  shortSummary   String?
+  description    String?
+  functionDesc   String?
+  socialImpact   String?
+  exampleCode    String?
+  officialUrl    String?
+  repositoryUrl  String?
+  costMinUSD     Int?
   costMaxUSD     Int?
   developerId    String?
   organizationId String?
-  scrapedAt      DateTime? // when data was last fetched from an external source
-  dataSource     String?   // 'manual', 'curated', 'scraped'
-  tags           String[]  @default([]) // searchable keywords: npm keywords, pypi classifiers, extracted terms
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-
-  developer    Developer?    @relation(fields: [developerId], references: [id])
-  organization Organization? @relation(fields: [organizationId], references: [id])
-
-  versions     Version[]
-  features     Feature[]        // notable capabilities / integrations
-
-  // Self-referential dependencies (libraries this one depends on)
-  dependsOn    LibraryDep[]  @relation("LibraryDependencies")
-  dependents   LibraryDep[]  @relation("LibraryDependents")
-
-  categories Library_Category[]
-  platforms  Library_Platform[]  // OS / runtime compatibility
-  languages  Library_Language[]  // programming language(s)
+  scrapedAt      DateTime?
+  dataSource     String?
+  tags           String[]           @default([])
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  features       Feature[]
+  developer      Developer?         @relation(fields: [developerId], references: [id])
+  organization   Organization?      @relation(fields: [organizationId], references: [id])
+  dependents     LibraryDep[]       @relation("LibraryDependents")
+  dependsOn      LibraryDep[]       @relation("LibraryDependencies")
+  categories     Library_Category[]
+  languages      Library_Language[]
+  platforms      Library_Platform[]
+  versions       Version[]
 
   @@index([slug])
   @@index([developerId])
   @@index([organizationId])
 }
-
-// ---------------------------------------------------------------------------
-// Developer & Organization
-// ---------------------------------------------------------------------------
 
 model Developer {
   id        String    @id @default(cuid())
@@ -73,10 +57,6 @@ model Organization {
   libraries Library[]
 }
 
-// ---------------------------------------------------------------------------
-// Category  (Web, Data Science, Security, DevOps, etc.)
-// ---------------------------------------------------------------------------
-
 model Category {
   id        String             @id @default(cuid())
   name      String             @unique
@@ -87,17 +67,12 @@ model Library_Category {
   libraryId  String
   categoryId String
   assignedAt DateTime @default(now())
-
-  library  Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
-  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  library    Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
 
   @@id([libraryId, categoryId])
   @@index([categoryId])
 }
-
-// ---------------------------------------------------------------------------
-// Platform  (macOS, Windows, Linux, Web, Android, iOS, Cross-platform)
-// ---------------------------------------------------------------------------
 
 model Platform {
   id        String             @id @default(cuid())
@@ -108,17 +83,12 @@ model Platform {
 model Library_Platform {
   libraryId  String
   platformId String
-
-  library  Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
-  platform Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
+  library    Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  platform   Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
 
   @@id([libraryId, platformId])
   @@index([platformId])
 }
-
-// ---------------------------------------------------------------------------
-// Language  (Python, JavaScript, TypeScript, Java, Rust, Go, etc.)
-// ---------------------------------------------------------------------------
 
 model Language {
   id        String             @id @default(cuid())
@@ -129,65 +99,45 @@ model Language {
 model Library_Language {
   libraryId  String
   languageId String
-
-  library  Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
-  language Language @relation(fields: [languageId], references: [id], onDelete: Cascade)
+  language   Language @relation(fields: [languageId], references: [id], onDelete: Cascade)
+  library    Library  @relation(fields: [libraryId], references: [id], onDelete: Cascade)
 
   @@id([libraryId, languageId])
   @@index([languageId])
 }
 
-// ---------------------------------------------------------------------------
-// Version history
-// ---------------------------------------------------------------------------
-
 model Version {
   id         String    @id @default(cuid())
   libraryId  String
-  name       String    // e.g. "4.2.1"
+  name       String
   releasedAt DateTime?
   notes      String?
-
-  library Library @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  library    Library   @relation(fields: [libraryId], references: [id], onDelete: Cascade)
 
   @@index([libraryId])
 }
-
-// ---------------------------------------------------------------------------
-// Feature  (notable capabilities / integrations of a library)
-// ---------------------------------------------------------------------------
 
 model Feature {
   id        String  @id @default(cuid())
   libraryId String
-  name      String  // e.g. "Async support", "OAuth2 integration"
-  spec      String? // additional detail
+  name      String
+  spec      String?
   required  Boolean @default(true)
-
-  library Library @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  library   Library @relation(fields: [libraryId], references: [id], onDelete: Cascade)
 
   @@index([libraryId])
 }
 
-// ---------------------------------------------------------------------------
-// Library → Library dependency (self-referential)
-// ---------------------------------------------------------------------------
-
 model LibraryDep {
-  id          String @id @default(cuid())
+  id          String  @id @default(cuid())
   libraryId   String
   dependsOnId String
-
-  library   Library @relation("LibraryDependencies", fields: [libraryId], references: [id], onDelete: Cascade)
-  dependsOn Library @relation("LibraryDependents", fields: [dependsOnId], references: [id], onDelete: Cascade)
+  dependsOn   Library @relation("LibraryDependents", fields: [dependsOnId], references: [id], onDelete: Cascade)
+  library     Library @relation("LibraryDependencies", fields: [libraryId], references: [id], onDelete: Cascade)
 
   @@unique([libraryId, dependsOnId])
   @@index([dependsOnId])
 }
-
-// ---------------------------------------------------------------------------
-// NextAuth.js models (unchanged)
-// ---------------------------------------------------------------------------
 
 model Account {
   id                String  @id @default(cuid())
@@ -202,8 +152,7 @@ model Account {
   scope             String?
   id_token          String?
   session_state     String?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
 }
@@ -235,22 +184,18 @@ model VerificationToken {
   @@unique([identifier, token])
 }
 
-// ---------------------------------------------------------------------------
-// Support / Help Desk
-// ---------------------------------------------------------------------------
-
 model SupportTicket {
   id         String    @id @default(cuid())
   name       String
   email      String
   subject    String
-  category   String    // Bug Report | Search Issue | Missing Library | Feature Request | General Question
-  message    String    @db.Text
-  status     String    @default("open") // open | in_progress | resolved
-  adminReply String?   @db.Text
-  repliedAt  DateTime?
+  category   String
+  message    String
+  status     String    @default("open")
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
+  adminReply String?
+  repliedAt  DateTime?
 
   @@index([status])
   @@index([createdAt])

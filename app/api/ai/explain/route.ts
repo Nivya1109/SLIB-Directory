@@ -35,6 +35,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
   }
 
+  // Strict formatting rules are necessary because LLMs default to long prose paragraphs.
+  // The frontend renders this response inside a fixed-height card — paragraphs break the layout.
+  // Explicit bullet point and section constraints keep the output compact and predictable.
   const prompt = `Explain whether the library is suitable for the user.
 
 Library name: ${library.name}

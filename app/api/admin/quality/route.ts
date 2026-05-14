@@ -5,6 +5,9 @@ export const dynamic = 'force-dynamic'
 
 export async function GET() {
   try {
+    // Run all queries concurrently — these are independent reads so there is no
+    // reason to wait for one before starting the next. Promise.all cuts total
+    // latency from ~(sum of all queries) down to ~(slowest single query).
     const [
       missingExampleCount,
       missingExampleList,
@@ -80,7 +83,9 @@ export async function GET() {
         take: 10,
       }),
 
-      // Source breakdown — use groupBy to avoid BigInt serialization issues
+      // groupBy instead of $queryRaw COUNT(*) — Prisma raw queries return BigInt
+      // for aggregate results which cannot be serialized to JSON. groupBy returns
+      // a plain number, so no manual conversion is needed.
       prisma.library.groupBy({
         by: ['dataSource'],
         _count: { id: true },

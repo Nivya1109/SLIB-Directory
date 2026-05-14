@@ -8,12 +8,16 @@ import { crawlApache } from '@/etl/crawlers/apache'
 
 export const dynamic = 'force-dynamic'
 
-// New libraries to discover per source per run (total ≤ ~3)
+// Kept at 1 per source — this route runs incrementally from the admin UI.
+// Bulk crawling is done offline via the CLI scripts (pnpm crawl).
 const PER_SOURCE_NEW = 1
-// Existing records with no exampleCode to backfill per run
-// Kept low: each backfill is 1–2 s of network I/O; Render proxy timeout is ~30 s
+
+// Each backfill call makes 1–2 external network requests (npm/PyPI), each taking ~0.5–2s.
+// Keeping this at 2 ensures backfill completes well within the route timeout.
 const BACKFILL_LIMIT = 2
-// Hard wall: respond well before Render's proxy kills at ~30 s (accounts for cold starts)
+
+// Render's reverse proxy hard-kills connections at ~30s. We use 18s to leave
+// room for cold-start overhead and the final DB queries / JSON serialization.
 const ROUTE_TIMEOUT_MS = 18_000
 
 // Extracts the first real code block from markdown — same logic as the crawlers.
@@ -100,8 +104,9 @@ export async function POST(_request: NextRequest) {
     let backfilled = 0
     let timedOut = false
 
-    // Race all crawler work against the hard wall timeout.
-    // Render's proxy kills the connection at ~30 s; we must respond before that.
+    // Race the crawler work against the timeout fence. Without this, a slow or
+    // hanging external API (npm/PyPI/Apache) would block the route indefinitely
+    // and Render would kill the connection mid-response with no error to the client.
     const crawlWork = async () => {
       console.log('[crawler] starting npm (discovery, new only)...')
       try {
@@ -152,7 +157,9 @@ export async function POST(_request: NextRequest) {
       console.warn(`[crawler] hit ${ROUTE_TIMEOUT_MS}ms wall — returning partial result`)
     }
 
-    // Snapshot counts AFTER — deltas are the ground truth
+    // Compare DB counts before and after — the delta is the true number of newly
+    // inserted libraries. The crawlers use upsert, so their "success" counter
+    // includes both inserts and updates; only the delta reflects real additions.
     const after      = await countBySource()
     const totalAfter = await prisma.library.count()
     const delta      = (key: string) => (after[key] ?? 0) - (before[key] ?? 0)

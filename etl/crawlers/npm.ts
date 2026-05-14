@@ -9,7 +9,9 @@ import { PrismaClient } from '@prisma/client'
 
 const prisma = new PrismaClient()
 
-// Top npm packages grouped by category — curated list for reliable, high-quality data
+// Curated list rather than pulling from npm's trending API because trending includes
+// low-quality or short-lived packages. A hand-picked list ensures every entry has
+// real documentation and a meaningful shortSummary for search.
 const NPM_PACKAGES: Array<{ name: string; category: string }> = [
   // HTTP & Networking
   { name: 'axios', category: 'HTTP & Networking' },
@@ -184,11 +186,12 @@ async function upsertLibrary(pkgData: NpmPackageData, category: string) {
     developerId = dev.id
   }
 
-  // Preserve exampleCode: fetch existing value so the update block never overwrites it
+  // Upsert (not insert) so the crawler is safely re-runnable without creating duplicates.
+  // On re-runs it refreshes metadata (summary, url, tags) while leaving manually
+  // curated fields (exampleCode) intact.
   const existing = await prisma.library.findUnique({ where: { slug }, select: { exampleCode: true } })
   const readmeCode = extractExampleCode(pkgData.readme)
 
-  // Upsert library
   await prisma.library.upsert({
     where: { slug },
     create: {
@@ -318,11 +321,12 @@ export async function crawlNpm(options: CrawlNpmOptions = {}) {
       console.log(`  ❌  ${name} — ${err}`)
       failed++
     }
-    // Rate limit: 150ms between requests
+    // 150ms delay between requests to avoid triggering npm registry rate limiting
     await new Promise((r) => setTimeout(r, 150))
   }
 
-  // Discovery phase — find packages not already in DB (skipped in API/batch mode)
+  // Discovery is skipped when called from the admin API route (skipDiscovery=true)
+  // because the route has a hard timeout. Discovery runs only in CLI/batch mode.
   let discovered = 0
   if (!skipDiscovery) {
     const allNames = await prisma.library.findMany({ select: { name: true } })

@@ -127,7 +127,8 @@ function extractPypiTags(info: PypiPackageData['info'], category: string): strin
   const kwString = info.keywords || ''
   const kwTags = kwString.split(/[\s,;]+/).map((k) => k.toLowerCase().trim()).filter((k) => k.length > 1)
 
-  // 2. Extract useful labels from classifiers
+  // 2. Extract useful labels from PyPI classifiers — these are more structured and
+  //    reliable than free-text keyword fields, so we prefer them for tag generation.
   //    e.g. "Framework :: Django" → "django"
   //         "Topic :: Internet :: WWW/HTTP :: HTTP Servers" → "http servers"
   const classifierTags: string[] = []
@@ -252,7 +253,9 @@ async function discoverNewPypiPackages(knownSlugs: Set<string>, limit: number): 
   let newCount = 0
 
   try {
-    // Top PyPI packages by downloads — public JSON snapshot updated daily
+    // Using hugovk's top-pypi-packages snapshot rather than the PyPI search API
+    // because PyPI's /search endpoint is unofficial and frequently rate-limited.
+    // This snapshot is updated daily and gives the 5000 most-downloaded packages.
     const res = await fetch(
       'https://hugovk.github.io/top-pypi-packages/top-pypi-packages-30-days.min.json'
     )

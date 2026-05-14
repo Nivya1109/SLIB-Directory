@@ -25,7 +25,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
   }
 
-  // Fetch a representative sample of libraries from the database
+  // Fetch a capped sample of 100 libraries to stay within the LLM's context/token budget.
+  // Ordered by createdAt (oldest first) to keep results deterministic across requests —
+  // a random sample would produce inconsistent recommendations for the same query.
+  // Only libraries with a shortSummary are included so the AI has enough context to judge.
   const libs = await prisma.library.findMany({
     where: { shortSummary: { not: null } },
     select: {
@@ -79,6 +82,8 @@ Respond with ONLY valid JSON in this exact format, nothing else:
       body: JSON.stringify({
         model: 'llama-3.1-8b-instant',
         max_tokens: 300,
+        // Low temperature (0.3) to get reliable, structured JSON output.
+        // Higher values cause the model to deviate from the required format.
         temperature: 0.3,
         messages: [{ role: 'user', content: prompt }],
       }),
@@ -106,7 +111,9 @@ Respond with ONLY valid JSON in this exact format, nothing else:
       reason: string
     }>
 
-    // Verify slugs exist in our DB to prevent hallucination leaking through
+    // Cross-check returned slugs against the DB sample we gave the model.
+    // LLMs occasionally hallucinate library names that sound plausible but don't exist —
+    // this filter ensures the UI never links to a non-existent detail page.
     const validSlugs = new Set(libs.map((l) => l.slug))
     const verified = recommendations.filter((r) => validSlugs.has(r.slug)).slice(0, 3)
 
